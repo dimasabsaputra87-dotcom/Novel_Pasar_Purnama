@@ -143,17 +143,13 @@
   .toc-item:hover,.bm-item:hover{background:var(--chip);}
   .toc-item .n{color:var(--accent);font-variant-numeric:tabular-nums;min-width:26px;}
   .toc-item.cur{background:var(--chip);}
-  .bm-emoji{font-size:18px;line-height:1.3;}
   .bm-body{flex:1;min-width:0;}
   .bm-body .bm-loc{font-size:13px;font-weight:600;}
   .bm-body .bm-note{font-size:13px;color:var(--ink-soft);white-space:normal;word-break:break-word;margin-top:2px;}
   .bm-body .bm-time{font-size:11px;color:var(--ink-soft);margin-top:3px;}
-  .bm-del{color:var(--ink-soft);cursor:pointer;padding:2px 6px;border-radius:8px;flex:0 0 auto;}
-  .bm-del:hover{background:var(--chip);}
+  .bm-del,.bm-edit{color:var(--ink-soft);cursor:pointer;padding:2px 6px;border-radius:8px;flex:0 0 auto;}
+  .bm-del:hover,.bm-edit:hover{background:var(--chip);}
   .empty{color:var(--ink-soft);font-size:13px;text-align:center;padding:18px 0;}
-  .emoji-pick{display:flex;flex-wrap:wrap;gap:6px;}
-  .emoji-pick .e{font-size:20px;padding:6px 8px;border-radius:10px;cursor:pointer;background:var(--chip);}
-  .emoji-pick .e.on{outline:2px solid var(--chip-on);}
   textarea.note{width:100%;min-height:70px;resize:vertical;border-radius:11px;border:1px solid var(--panel-line);
     background:var(--chip);color:var(--panel-ink);padding:10px;font-family:var(--ui);font-size:14px;}
   .num{display:flex;gap:8px;align-items:center;}
@@ -294,14 +290,14 @@
   <div id="marks" class="modal" role="dialog" aria-label="Bookmarks">
     <h2>Bookmarks<span class="x" data-close>&times;</span></h2>
     <button class="btn" id="addMark">+ Bookmark this page</button>
+    <button class="btn ghost" id="addMarkNote">+ Bookmark with a note</button>
     <div id="markList" style="margin-top:14px;"></div>
   </div>
 
   <!-- Add/Edit bookmark modal -->
   <div id="markEdit" class="modal" role="dialog" aria-label="Add bookmark">
     <h2 id="markEditTitle">New Bookmark<span class="x" data-close>&times;</span></h2>
-    <div class="row"><label>Emoji</label><div class="emoji-pick" id="emojiPick"></div></div>
-    <div class="row"><label>Note (optional)</label><textarea class="note" id="markNote" placeholder="A note for this page…"></textarea></div>
+    <div class="row"><label>Note</label><textarea class="note" id="markNote" placeholder="A note for this page…"></textarea></div>
     <button class="btn" id="markSave">Save bookmark</button>
   </div>
 
@@ -316,7 +312,6 @@ const NOVEL = JSON.parse(Android.getNovel());
   "use strict";
   const $ = s => document.querySelector(s);
   const KEY = "mhn:" + NOVEL.id;
-  const EMOJIS = ["🔖","⭐","❤️","😀","😮","😢","🤔","💡","🌟","📖"];
   const SIZES = { small:17, medium:20, big:24 };
 
   const flow = $("#flow"), stage = $("#stage"), seam = $("#seam");
@@ -329,7 +324,7 @@ const NOVEL = JSON.parse(Android.getNovel());
     chapter:0, page:0, pages:1, colW:1,
     bookmarks:[], overlay:false
   };
-  let editing = { emoji:EMOJIS[0], id:null };
+  let editing = { id:null };
 
   /* ---------- persistence ---------- */
   function load(){
@@ -557,35 +552,40 @@ const NOVEL = JSON.parse(Android.getNovel());
     items.forEach(bm=>{
       const b=document.createElement("div"); b.className="bm-item";
       const ch=NOVEL.chapters[bm.chapter];
-      b.innerHTML='<span class="bm-emoji">'+(bm.emoji||"🔖")+'</span>'+
-        '<span class="bm-body"><span class="bm-loc">'+escapeHtml(ch?ch.title:"—")+'</span>'+
+      b.innerHTML='<span class="bm-body"><span class="bm-loc">'+escapeHtml(ch?ch.title:"—")+'</span>'+
         (bm.note?'<span class="bm-note">'+escapeHtml(bm.note)+'</span>':'')+
         '<span class="bm-time">'+fmtTime(bm.time)+'</span></span>'+
+        '<span class="bm-edit" title="'+(bm.note?"Edit note":"Add note")+'">✎</span>'+
         '<span class="bm-del" title="Delete">🗑</span>';
       b.querySelector(".bm-body").addEventListener("click",()=>{ closeModals(false); openChapter(bm.chapter, bm.bi); });
-      b.querySelector(".bm-emoji").addEventListener("click",()=>{ closeModals(false); openChapter(bm.chapter, bm.bi); });
+      b.querySelector(".bm-edit").addEventListener("click",(ev)=>{ ev.stopPropagation(); openMarkEdit(bm); });
       b.querySelector(".bm-del").addEventListener("click",(ev)=>{ ev.stopPropagation();
         state.bookmarks=state.bookmarks.filter(x=>x.id!==bm.id); save(); renderMarkList(); });
       box.appendChild(b);
     });
   }
-  $("#addMark").addEventListener("click",()=>{
-    editing={ emoji:EMOJIS[0], id:null, chapter:state.chapter, bi:firstVisibleBlock() };
-    $("#markEditTitle").firstChild.textContent="New Bookmark";
-    $("#markNote").value="";
-    renderEmojiPick();
-    openModal("#markEdit");
-  });
-  function renderEmojiPick(){
-    const box=$("#emojiPick"); box.innerHTML="";
-    EMOJIS.forEach(e=>{ const s=document.createElement("span");
-      s.className="e"+(e===editing.emoji?" on":""); s.textContent=e;
-      s.addEventListener("click",()=>{ editing.emoji=e; renderEmojiPick(); }); box.appendChild(s); });
-  }
-  $("#markSave").addEventListener("click",()=>{
+  function addBookmark(note){
     state.bookmarks.push({ id:"b"+Date.now()+Math.random().toString(36).slice(2,6),
-      chapter:editing.chapter, bi:editing.bi, emoji:editing.emoji,
-      note:$("#markNote").value.trim(), time:Date.now() });
+      chapter:state.chapter, bi:firstVisibleBlock(), note:note||"", time:Date.now() });
+    save();
+  }
+  /* one tap: bookmark the current page, no note */
+  $("#addMark").addEventListener("click",()=>{ addBookmark(""); renderMarkList(); });
+  /* bm = existing bookmark to add/edit its note, or null for a new bookmark with a note */
+  function openMarkEdit(bm){
+    editing = bm ? { id:bm.id } : { id:null, chapter:state.chapter, bi:firstVisibleBlock() };
+    $("#markEditTitle").firstChild.textContent = bm ? (bm.note?"Edit Note":"Add Note") : "New Bookmark";
+    $("#markNote").value = bm ? (bm.note||"") : "";
+    openModal("#markEdit");
+    setTimeout(()=>$("#markNote").focus(), 50);
+  }
+  $("#addMarkNote").addEventListener("click",()=>openMarkEdit(null));
+  $("#markSave").addEventListener("click",()=>{
+    const note=$("#markNote").value.trim();
+    const bm=editing.id && state.bookmarks.find(x=>x.id===editing.id);
+    if(bm) bm.note=note;
+    else state.bookmarks.push({ id:"b"+Date.now()+Math.random().toString(36).slice(2,6),
+      chapter:editing.chapter, bi:editing.bi, note:note, time:Date.now() });
     save(); closeModals(false); renderMarkList(); openModal("#marks");
   });
 

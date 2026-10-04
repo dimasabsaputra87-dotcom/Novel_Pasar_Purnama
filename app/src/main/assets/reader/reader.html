@@ -16,6 +16,7 @@
     --anim-ms: 280ms;
     --fs: 20px;           /* reading font size, set by JS */
     --m: 40px;            /* side margin, set by JS */
+    --g: 24px;            /* hidden gap between page columns (absorbs glyph overhang) */
     --t: 44px;            /* top/bottom margin, set by JS */
   }
   html[data-theme="light"]{
@@ -50,14 +51,16 @@
     position:absolute;
     top:calc(var(--t) + env(safe-area-inset-top,0px));
     bottom:calc(var(--t) + 22px + env(safe-area-inset-bottom,0px)); /* extra room for footer */
-    left:calc(var(--m) + env(safe-area-inset-left,0px));
-    right:calc(var(--m) + env(safe-area-inset-right,0px));
+    /* widened by half a gap each side; #flow's margin puts the text back at --m */
+    left:calc(var(--m) - var(--g)/2 + env(safe-area-inset-left,0px));
+    right:calc(var(--m) - var(--g)/2 + env(safe-area-inset-right,0px));
     overflow:hidden;
   }
   #stage.perspective{perspective:1600px;}
   #flow{
-    height:100%;width:100%;
-    column-gap:0;
+    height:100%;width:calc(100% - var(--g));
+    margin-left:calc(var(--g)/2);
+    column-gap:var(--g);
     font-size:var(--fs);line-height:1.62;
     transform:translateX(0);
     will-change:transform;
@@ -382,12 +385,20 @@ const NOVEL = JSON.parse(Android.getNovel());
     computeMargins();
     flow.classList.remove("animate");
     flow.style.transform = "translateX(0px)";     // reset so measurements are absolute
-    const colW = stage.clientWidth || 1;
+    // One page = one column + one gap. Pin the stage to a whole-pixel width so the
+    // page step matches the real column pitch exactly; with a fractional width
+    // (common on tablets) the rounded step drifts and the neighbouring page's
+    // text peeks in at the edges.
+    stage.style.width = "";
+    const colW = Math.max(1, Math.floor(stage.getBoundingClientRect().width));
+    stage.style.width = colW+"px";
+    const gap = parseFloat(getComputedStyle(flow).columnGap) || 0;
     state.colW = colW;
-    flow.style.columnWidth = colW+"px";
+    flow.style.width = (colW-gap)+"px";
+    flow.style.columnWidth = (colW-gap)+"px";
     flow.style.height = stage.clientHeight+"px";
     void flow.offsetWidth;                          // force reflow
-    state.pages = Math.max(1, Math.round(flow.scrollWidth / colW));
+    state.pages = Math.max(1, Math.round((flow.scrollWidth + gap) / colW));
   }
   function layout(preserveBi){
     if(state.view!=="reading") return;

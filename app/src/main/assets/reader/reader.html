@@ -78,6 +78,13 @@
   #flow hr.scene{border:none;text-align:center;margin:1.2em 0;overflow:visible;}
   #flow hr.scene::before{content:"* * *";color:var(--ink-soft);letter-spacing:.4em;font-size:1em;}
 
+  /* "you were here" marker shown after a relayout (rotation / text size) */
+  #here{position:fixed;pointer-events:none;z-index:3;opacity:0;border-radius:4px;
+    background:rgba(138,109,59,.16);
+    background:color-mix(in srgb, var(--accent) 16%, transparent);
+    box-shadow:-10px 0 0 -7px var(--accent);transition:opacity .5s ease;}
+  #here.on{opacity:1;transition:none;}
+
   /* curl seam overlay */
   #seam{position:absolute;inset:0;pointer-events:none;opacity:0;z-index:2;
     background:linear-gradient(90deg, rgba(0,0,0,.28), rgba(0,0,0,0) 12%);}
@@ -217,6 +224,8 @@
     </div>
   </div>
 
+  <div id="here"></div>
+
   <div id="footer">
     <div id="progress"><i></i></div>
     <div id="footmeta"><span class="ch"></span><span class="pg"></span></div>
@@ -350,7 +359,8 @@ const NOVEL = JSON.parse(Android.getNovel());
       localStorage.setItem(KEY, JSON.stringify({
         theme:state.theme, size:state.size, anim:state.anim,
         bookmarks:state.bookmarks,
-        pos:{ chapter:state.chapter, bi:firstVisibleBlock() }
+        pos: anchor ? { chapter:state.chapter, bi:anchor.bi, off:anchor.off }
+                    : { chapter:state.chapter, bi:firstVisibleBlock() }
       }));
       if(state.view==="reading") Android.onProgress(state.chapter);
     }catch(e){}
@@ -388,11 +398,17 @@ const NOVEL = JSON.parse(Android.getNovel());
     void flow.offsetWidth;                          // force reflow
     state.pages = Math.max(1, Math.round(flow.scrollWidth / colW));
   }
-  function layout(preserveBi){
+  // Re-paginate (rotation, window resize, text size) and land on the page that
+  // holds the same first character the reader was looking at. The anchor is
+  // kept as-is (not re-derived from the new page), so rotating back and forth
+  // never drifts.
+  function relayout(flash){
     if(state.view!=="reading") return;
+    const a = anchor;
     measure();
-    const target = (preserveBi!=null) ? pageOfBlock(preserveBi) : Math.min(state.page, state.pages-1);
-    goToPage(Math.max(0, target), false);
+    if(!a){ goToPage(Math.min(state.page, state.pages-1), false); return; }
+    goToPage(pageOfAnchor(a), false, 0, true);
+    if(flash) flashAnchor(a);
   }
   function renderChapter(ci){
     state.chapter = Math.max(0, Math.min(NOVEL.chapters.length-1, ci));
@@ -402,6 +418,75 @@ const NOVEL = JSON.parse(Android.getNovel());
       '<div class="title">'+escapeHtml(c.title)+'</div></div>' + c.html;
     // index top-level blocks for anchoring
     let bi=0; for(const el of flow.children){ el.setAttribute("data-bi", bi++); }
+  }
+  /* ---------- character-level anchor ----------
+     anchor = { bi, off }: first character on the current page, as block index +
+     character offset inside that block. Survives any re-pagination. */
+  let anchor = null;
+  function textNodes(el){
+    const w=document.createTreeWalker(el, NodeFilter.SHOW_TEXT), a=[]; let n;
+    while((n=w.nextNode())) a.push(n);
+    return a;
+  }
+  function flowLeft(){ return flow.getBoundingClientRect().left; }  // moves with the transform, like the text
+  function pageOfX(x){ return Math.max(0, Math.floor((x+2)/state.colW)); }
+  function charRect(node, i){
+    const len=node.length;
+    for(let j=i;j<len;j++){
+      const r=document.createRange(); r.setStart(node,j); r.setEnd(node,j+1);
+      const rs=r.getClientRects();
+      if(rs.length && (rs[0].width>0 || rs[0].height>0)) return rs[0];
+    }
+    return null;
+  }
+  function computeAnchor(){
+    if(state.view!=="reading") return null;
+    const fl=flowLeft(), p=state.page;
+    for(const el of flow.children){
+      const bi=parseInt(el.getAttribute("data-bi")||"0",10);
+      const br=el.getBoundingClientRect();
+      if(pageOfX(br.right-fl-4) < p) continue;            // block ends before this page
+      let base=0;
+      for(const n of textNodes(el)){
+        const len=n.length;
+        const last=charRect(n, Math.max(0,len-1));
+        if(!last || pageOfX(last.left-fl) < p){ base+=len; continue; }
+        let lo=0, hi=len-1;                                 // first char on page >= p
+        while(lo<hi){
+          const mid=(lo+hi)>>1, r=charRect(n,mid);
+          if(r && pageOfX(r.left-fl) >= p) hi=mid; else lo=mid+1;
+        }
+        return { bi, off:base+lo };
+      }
+      return { bi, off:0 };                                 // image / rule etc.
+    }
+    return null;
+  }
+  function anchorRect(a){
+    const el=flow.querySelector('[data-bi="'+a.bi+'"]');
+    if(!el) return null;
+    let off=a.off;
+    for(const n of textNodes(el)){
+      if(off < n.length){ const r=charRect(n,off); if(r) return r; off=0; continue; }
+      off-=n.length;
+    }
+    return el.getBoundingClientRect();
+  }
+  function pageOfAnchor(a){
+    const r=anchorRect(a);
+    return r ? pageOfX(r.left-flowLeft()) : 0;
+  }
+  let hereTimer=null;
+  function flashAnchor(a){
+    const r=anchorRect(a), here=$("#here");
+    clearTimeout(hereTimer); here.classList.remove("on");
+    if(!r) return;
+    const sr=stage.getBoundingClientRect();
+    if(r.top - sr.top < r.height*0.8) return;              // already the first line: nothing to point at
+    Object.assign(here.style,{ left:(sr.left-6)+"px", width:(sr.width+12)+"px",
+      top:(r.top-2)+"px", height:(r.height+4)+"px" });
+    here.classList.add("on");
+    hereTimer=setTimeout(()=>here.classList.remove("on"), 1400);
   }
   function currentTX(){ const m=/translateX\((-?\d+(?:\.\d+)?)px\)/.exec(flow.style.transform); return m?parseFloat(m[1]):0; }
   function pageOfBlock(bi){
@@ -423,9 +508,10 @@ const NOVEL = JSON.parse(Android.getNovel());
     }
     return best;
   }
-  function goToPage(p, animate, dir){
+  function goToPage(p, animate, dir, keepAnchor){
     p = Math.max(0, Math.min(state.pages-1, p));
     state.page = p;
+    if(!keepAnchor) anchor = computeAnchor();
     const x = -p*state.colW;
     if(animate && state.anim!=="none"){
       flow.classList.add("animate");
@@ -459,10 +545,11 @@ const NOVEL = JSON.parse(Android.getNovel());
       renderChapter(state.chapter-1); measure(); goToPage(state.pages-1, false); save();
     }
   }
-  function openChapter(ci, bi){
+  function openChapter(ci, bi, off){
     setView("reading");
     renderChapter(ci); measure();
-    goToPage(bi!=null ? pageOfBlock(bi) : 0, false);
+    if(bi!=null && off!=null){ const a={bi, off}; anchor=a; goToPage(pageOfAnchor(a), false, 0, true); }
+    else goToPage(bi!=null ? pageOfBlock(bi) : 0, false);
   }
 
   /* ---------- chrome (footer + buttons) ---------- */
@@ -520,7 +607,7 @@ const NOVEL = JSON.parse(Android.getNovel());
   document.querySelectorAll("#segTheme .seg").forEach(s=>s.addEventListener("click",()=>{
     state.theme=s.getAttribute("data-theme"); applyTheme(); save(); }));
   document.querySelectorAll("#segSize .seg").forEach(s=>s.addEventListener("click",()=>{
-    const bi=firstVisibleBlock(); state.size=s.getAttribute("data-size"); applySize(); layout(bi); save(); }));
+    state.size=s.getAttribute("data-size"); applySize(); relayout(true); save(); }));
   document.querySelectorAll("#segAnim .seg").forEach(s=>s.addEventListener("click",()=>{
     state.anim=s.getAttribute("data-anim"); applyAnim(); save(); }));
   $("#mToc").addEventListener("click", ()=>{ renderChapList(); openModal("#chapters"); });
@@ -608,7 +695,7 @@ const NOVEL = JSON.parse(Android.getNovel());
         state.bookmarks=Object.values(byId);
       }
       if(d.settings){ state.theme=d.settings.theme||state.theme; state.size=d.settings.size||state.size;
-        state.anim=d.settings.anim||state.anim; applyTheme(); applySize(); applyAnim(); if(state.view==="reading") layout(firstVisibleBlock()); }
+        state.anim=d.settings.anim||state.anim; applyTheme(); applySize(); applyAnim(); relayout(true); }
       save(); renderMarkList();
       alert("Imported "+(Array.isArray(d.bookmarks)?d.bookmarks.length:0)+" bookmark(s).");
     }catch(err){ alert("Could not read that file."); } };
@@ -672,8 +759,13 @@ const NOVEL = JSON.parse(Android.getNovel());
 
   /* ---------- resize ---------- */
   let rz=null;
-  window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(()=>{ if(state.view==="reading") layout(firstVisibleBlock()); },140); });
-  window.addEventListener("orientationchange",()=>{ setTimeout(()=>{ if(state.view==="reading") layout(firstVisibleBlock()); },260); });
+  let lastW=window.innerWidth;
+  function onResize(){
+    const rotated = Math.abs(window.innerWidth-lastW) > 80; lastW=window.innerWidth;
+    relayout(rotated);
+  }
+  window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(onResize,140); });
+  window.addEventListener("orientationchange",()=>{ clearTimeout(rz); rz=setTimeout(onResize,260); });
 
   /* ---------- Android back button: true = handled here ---------- */
   window.PPback = function(){
@@ -688,7 +780,7 @@ const NOVEL = JSON.parse(Android.getNovel());
     load(); applyTheme(); applySize(); applyAnim();
     buildCover(); buildToc();
     requestWake();
-    if(state._resume){ openChapter(state._resume.chapter, state._resume.bi); }
+    if(state._resume){ openChapter(state._resume.chapter, state._resume.bi, state._resume.off); }
     else { setView("cover"); }
   }
   boot();

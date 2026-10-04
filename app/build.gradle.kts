@@ -14,8 +14,8 @@ android {
         applicationId = "com.dimas.pasarpurnama"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
     }
 
     // Release signing comes from keystore.properties (git-ignored, machine-specific).

@@ -58,7 +58,8 @@ class ReaderActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        repo = BookRepository(this)
+        val user = AuthManager(this).user ?: return finish()
+        repo = BookRepository(this, user.userId)
         bookId = intent.getStringExtra(EXTRA_BOOK_ID) ?: return finish()
 
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -137,6 +138,17 @@ class ReaderActivity : ComponentActivity() {
 
         @JavascriptInterface
         fun onProgress(chapter: Int) = repo.saveProgress(bookId, chapter)
+
+        /** Saved reader state (theme, size, bookmarks, position) for this account, or "" if none yet. */
+        @JavascriptInterface
+        fun getState(): String = repo.readerState(bookId).orEmpty()
+
+        @JavascriptInterface
+        fun saveState(json: String) = repo.saveReaderState(bookId, json)
+
+        /** Whether the page may fall back to the pre-account localStorage state (first account on this device only). */
+        @JavascriptInterface
+        fun useLegacyState(): Boolean = repo.ownsLegacyData()
 
         /** Paints the notch / system-bar padding in the reader's current page colour. */
         @JavascriptInterface

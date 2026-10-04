@@ -334,7 +334,7 @@ const NOVEL = JSON.parse(Android.getNovel());
   /* ---------- persistence ---------- */
   function load(){
     try{
-      const raw = localStorage.getItem(KEY);
+      const raw = Android.getState() || (Android.useLegacyState() ? localStorage.getItem(KEY) : null);
       if(raw){ const d = JSON.parse(raw);
         Object.assign(state, {
           theme:d.theme||state.theme, size:d.size||state.size, anim:d.anim||state.anim,
@@ -347,7 +347,7 @@ const NOVEL = JSON.parse(Android.getNovel());
   let saveTimer=null;
   function save(){
     try{
-      localStorage.setItem(KEY, JSON.stringify({
+      Android.saveState(JSON.stringify({
         theme:state.theme, size:state.size, anim:state.anim,
         bookmarks:state.bookmarks,
         pos:{ chapter:state.chapter, bi:firstVisibleBlock() }

@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#14161a">
+<title>Pasar Purnama</title>
+<style>
+  /* ============ THEMES ============ */
+  :root{
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Palatino, "Times New Roman", serif;
+    --ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --anim-ms: 280ms;
+    --fs: 20px;           /* reading font size, set by JS */
+    --m: 40px;            /* side margin, set by JS */
+    --t: 44px;            /* top/bottom margin, set by JS */
+  }
+  html[data-theme="light"]{
+    --bg:#faf8f3; --ink:#26221c; --ink-soft:#6b6459; --line:rgba(0,0,0,.10);
+    --panel:rgba(250,248,243,.86); --panel-ink:#26221c; --panel-line:rgba(0,0,0,.12);
+    --accent:#8a6d3b; --chip:rgba(0,0,0,.06); --chip-on:#8a6d3b; --shadow:rgba(0,0,0,.18);
+  }
+  html[data-theme="sepia"]{
+    --bg:#f3e9d2; --ink:#514436; --ink-soft:#8a795f; --line:rgba(81,68,54,.14);
+    --panel:rgba(243,233,210,.9); --panel-ink:#514436; --panel-line:rgba(81,68,54,.18);
+    --accent:#9c6b3f; --chip:rgba(81,68,54,.08); --chip-on:#9c6b3f; --shadow:rgba(81,68,54,.22);
+  }
+  html[data-theme="dark"]{
+    --bg:#15171b; --ink:#cbc7bd; --ink-soft:#8b877e; --line:rgba(255,255,255,.09);
+    --panel:rgba(28,30,35,.9); --panel-ink:#d7d3c9; --panel-line:rgba(255,255,255,.12);
+    --accent:#c9a55e; --chip:rgba(255,255,255,.08); --chip-on:#c9a55e; --shadow:rgba(0,0,0,.5);
+  }
+
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  html,body{height:100%;margin:0;padding:0;overflow:hidden;background:var(--bg);}
+  body{
+    font-family:var(--serif);color:var(--ink);
+    -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;
+    overscroll-behavior:none;position:fixed;inset:0;
+    transition:background-color .3s ease, color .3s ease;
+  }
+  img{max-width:100%;}
+
+  /* ============ READING SURFACE ============ */
+  #viewport{position:fixed;inset:0;touch-action:none;z-index:1;}
+  #stage{
+    position:absolute;
+    top:calc(var(--t) + env(safe-area-inset-top,0px));
+    bottom:calc(var(--t) + 22px + env(safe-area-inset-bottom,0px)); /* extra room for footer */
+    left:calc(var(--m) + env(safe-area-inset-left,0px));
+    right:calc(var(--m) + env(safe-area-inset-right,0px));
+    overflow:hidden;
+  }
+  #stage.perspective{perspective:1600px;}
+  #flow{
+    height:100%;width:100%;
+    column-gap:0;
+    font-size:var(--fs);line-height:1.62;
+    transform:translateX(0);
+    will-change:transform;
+    backface-visibility:hidden;
+  }
+  #flow.animate{transition:transform var(--anim-ms) cubic-bezier(.22,.61,.36,1);}
+  #flow p{margin:0 0 .9em;text-align:justify;-webkit-hyphens:auto;hyphens:auto;text-indent:1.3em;}
+  #flow p:first-of-type, #flow p.noindent{text-indent:0;}
+  #flow h1,#flow h2,#flow h3{font-weight:600;line-height:1.25;margin:.2em 0 .6em;text-align:left;}
+  #flow h1{font-size:1.5em;} #flow h2{font-size:1.28em;} #flow h3{font-size:1.12em;}
+  #flow blockquote{margin:0 0 .9em;padding-left:1em;border-left:2px solid var(--line);color:var(--ink-soft);font-style:italic;}
+  #flow ul,#flow ol{margin:0 0 .9em 1.2em;padding:0;}
+  #flow li{margin:.2em 0;}
+  #flow em{font-style:italic;} #flow strong{font-weight:700;}
+  #flow figure{margin:0 0 .9em;text-align:center;break-inside:avoid;}
+  #flow figure img{max-height:70vh;border-radius:6px;}
+  #flow figcaption{font-size:.8em;color:var(--ink-soft);margin-top:.3em;font-style:italic;}
+  #flow hr.scene{border:none;text-align:center;margin:1.2em 0;overflow:visible;}
+  #flow hr.scene::before{content:"* * *";color:var(--ink-soft);letter-spacing:.4em;font-size:1em;}
+
+  /* curl seam overlay */
+  #seam{position:absolute;inset:0;pointer-events:none;opacity:0;z-index:2;
+    background:linear-gradient(90deg, rgba(0,0,0,.28), rgba(0,0,0,0) 12%);}
+
+  /* ============ CHAPTER HEADER (start of chapter) ============ */
+  .chap-open{margin:0 0 1.1em;}
+  .chap-open .kicker{font-family:var(--ui);font-size:.72em;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);}
+  .chap-open .title{font-size:1.7em;font-weight:600;line-height:1.2;margin:.15em 0 0;}
+
+  /* ============ FOOTER ============ */
+  #footer{
+    position:fixed;left:0;right:0;
+    bottom:calc(6px + env(safe-area-inset-bottom,0px));
+    padding:0 max(14px, env(safe-area-inset-left,0px)) 0 max(14px, env(safe-area-inset-right,0px));
+    z-index:3;font-family:var(--ui);color:var(--ink-soft);font-size:12px;
+    display:flex;flex-direction:column;gap:5px;pointer-events:none;
+  }
+  #progress{height:3px;border-radius:3px;background:var(--line);overflow:hidden;}
+  #progress>i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s ease;}
+  #footmeta{display:flex;justify-content:space-between;align-items:center;}
+  #footmeta .ch{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;}
+
+  /* ============ OVERLAY BUTTONS (corners) ============ */
+  .corner{position:fixed;top:calc(12px + env(safe-area-inset-top,0px));z-index:6;
+    width:46px;height:46px;border-radius:50%;border:1px solid var(--panel-line);
+    background:var(--panel);color:var(--panel-ink);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+    display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 18px var(--shadow);cursor:pointer;
+    opacity:0;transform:translateY(-8px);pointer-events:none;transition:opacity .22s ease, transform .22s ease;}
+  .corner.show{opacity:1;transform:translateY(0);pointer-events:auto;}
+  #btnMenu{right:calc(12px + env(safe-area-inset-right,0px));}
+  #btnMark{left:calc(12px + env(safe-area-inset-left,0px));}
+  .corner svg{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;}
+
+  /* ============ MODALS ============ */
+  #scrim{position:fixed;inset:0;z-index:7;background:transparent;display:none;}
+  #scrim.on{display:block;}
+  .modal{position:fixed;z-index:8;left:50%;top:50%;transform:translate(-50%,-46%) scale(.98);
+    width:min(440px,92vw);max-height:82vh;overflow:auto;-webkit-overflow-scrolling:touch;
+    background:var(--panel);color:var(--panel-ink);border:1px solid var(--panel-line);
+    backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);
+    border-radius:18px;box-shadow:0 20px 60px var(--shadow);
+    font-family:var(--ui);padding:18px 18px 20px;
+    opacity:0;pointer-events:none;transition:opacity .2s ease, transform .2s ease;}
+  .modal.on{opacity:1;transform:translate(-50%,-50%) scale(1);pointer-events:auto;}
+  .modal h2{margin:2px 0 14px;font-size:17px;font-weight:600;font-family:var(--ui);letter-spacing:.01em;}
+  .modal h2 .x{float:right;cursor:pointer;color:var(--ink-soft);font-weight:400;font-size:20px;line-height:1;}
+  .row{margin:0 0 16px;}
+  .row>label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-soft);margin-bottom:8px;}
+  .segs{display:flex;gap:8px;flex-wrap:wrap;}
+  .seg{flex:1 1 auto;min-width:64px;text-align:center;padding:10px 8px;border-radius:11px;
+    background:var(--chip);border:1px solid transparent;color:var(--panel-ink);font-size:14px;cursor:pointer;
+    transition:background .15s ease, color .15s ease;font-family:var(--ui);}
+  .seg.on{background:var(--chip-on);color:#fff;border-color:transparent;}
+  .seg.sw{position:relative;height:44px;}
+  .btn{display:block;width:100%;padding:12px;border:none;border-radius:12px;background:var(--chip-on);color:#fff;
+    font-size:15px;cursor:pointer;font-family:var(--ui);margin-top:6px;}
+  .btn.ghost{background:var(--chip);color:var(--panel-ink);}
+  .btn.mini{width:auto;padding:8px 14px;font-size:13px;display:inline-block;margin:0;}
+  .toc-item, .bm-item{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;
+    padding:11px 10px;border:none;background:transparent;color:var(--panel-ink);cursor:pointer;
+    border-radius:10px;font-family:var(--ui);font-size:14px;border-bottom:1px solid var(--panel-line);}
+  .toc-item:hover,.bm-item:hover{background:var(--chip);}
+  .toc-item .n{color:var(--accent);font-variant-numeric:tabular-nums;min-width:26px;}
+  .toc-item.cur{background:var(--chip);}
+  .bm-emoji{font-size:18px;line-height:1.3;}
+  .bm-body{flex:1;min-width:0;}
+  .bm-body .bm-loc{font-size:13px;font-weight:600;}
+  .bm-body .bm-note{font-size:13px;color:var(--ink-soft);white-space:normal;word-break:break-word;margin-top:2px;}
+  .bm-body .bm-time{font-size:11px;color:var(--ink-soft);margin-top:3px;}
+  .bm-del{color:var(--ink-soft);cursor:pointer;padding:2px 6px;border-radius:8px;flex:0 0 auto;}
+  .bm-del:hover{background:var(--chip);}
+  .empty{color:var(--ink-soft);font-size:13px;text-align:center;padding:18px 0;}
+  .emoji-pick{display:flex;flex-wrap:wrap;gap:6px;}
+  .emoji-pick .e{font-size:20px;padding:6px 8px;border-radius:10px;cursor:pointer;background:var(--chip);}
+  .emoji-pick .e.on{outline:2px solid var(--chip-on);}
+  textarea.note{width:100%;min-height:70px;resize:vertical;border-radius:11px;border:1px solid var(--panel-line);
+    background:var(--chip);color:var(--panel-ink);padding:10px;font-family:var(--ui);font-size:14px;}
+  .num{display:flex;gap:8px;align-items:center;}
+  .num input{flex:1;background:var(--chip);border:1px solid var(--panel-line);border-radius:10px;
+    color:var(--panel-ink);padding:10px;font-size:14px;font-family:var(--ui);}
+
+  /* ============ COVER & TOC SCREENS ============ */
+  .screen{position:fixed;inset:0;z-index:4;display:none;flex-direction:column;
+    background:var(--bg);color:var(--ink);}
+  .screen.on{display:flex;}
+  #cover{align-items:center;justify-content:center;text-align:center;padding:8vh 10vw;cursor:pointer;}
+  #cover .cov-img{max-width:min(62vw,320px);max-height:46vh;border-radius:10px;box-shadow:0 14px 40px var(--shadow);margin-bottom:6vh;}
+  #cover .cov-title{font-size:clamp(28px,7vw,46px);font-weight:600;line-height:1.15;}
+  #cover .cov-sub{font-size:clamp(14px,3.4vw,18px);color:var(--ink-soft);margin-top:14px;font-style:italic;}
+  #cover .cov-author{font-family:var(--ui);font-size:clamp(13px,3.2vw,16px);color:var(--ink-soft);margin-top:5vh;letter-spacing:.02em;}
+  #cover .cov-tap{font-family:var(--ui);position:absolute;bottom:8vh;font-size:12px;color:var(--ink-soft);letter-spacing:.14em;text-transform:uppercase;animation:pulse 2.4s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:.9}}
+  #toc{padding:calc(7vh + env(safe-area-inset-top,0px)) 8vw 6vh;overflow:auto;-webkit-overflow-scrolling:touch;}
+  #toc h1{font-size:clamp(22px,5vw,32px);font-weight:600;margin:0 0 4px;}
+  #toc .tsub{font-family:var(--ui);color:var(--ink-soft);font-size:13px;margin:0 0 22px;letter-spacing:.02em;}
+  #toc .tlist{max-width:640px;margin:0 auto;}
+  #toc .titem{display:flex;gap:14px;align-items:baseline;padding:14px 6px;border-bottom:1px solid var(--line);cursor:pointer;}
+  #toc .titem:hover{color:var(--accent);}
+  #toc .titem .tn{color:var(--accent);font-variant-numeric:tabular-nums;min-width:30px;font-family:var(--ui);font-size:14px;}
+  #toc .titem .tt{font-size:clamp(16px,4vw,20px);}
+  #toc .tback{font-family:var(--ui);margin-top:26px;color:var(--ink-soft);font-size:13px;cursor:pointer;text-align:center;}
+
+  /* print root hidden on screen */
+  #printroot{display:none;}
+
+  @media print{
+    #viewport,#footer,.corner,#scrim,.modal,.screen,#seam{display:none !important;}
+    html,body{position:static;overflow:visible;height:auto;background:#fff;color:#000;}
+    #printroot{display:block;font-family:var(--serif);font-size:12pt;line-height:1.5;color:#000;}
+    #printroot .p-cover{text-align:center;padding-top:30vh;page-break-after:always;}
+    #printroot .p-cover h1{font-size:26pt;} #printroot .p-cover .a{margin-top:14pt;font-style:italic;}
+    #printroot section.p-chap{page-break-before:always;}
+    #printroot section.p-chap:first-child{page-break-before:avoid;}
+    #printroot h2.p-title{font-size:18pt;margin:0 0 14pt;}
+    #printroot p{text-indent:1.4em;margin:0 0 .5em;text-align:justify;}
+    #printroot p:first-of-type{text-indent:0;}
+    #printroot img{max-width:100%;}
+    #printroot hr.scene{border:none;text-align:center;} #printroot hr.scene::before{content:"* * *";letter-spacing:.4em;}
+    @page{
+      margin:16mm 15mm 18mm;
+      @bottom-center{
+        content: counter(page);
+        font-family:-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+        font-size:9pt; color:#666;
+      }
+    }
+    @page:first{ @bottom-center{ content:""; } }  /* no number on the cover / first page */
+  }
+</style>
+</head>
+<body>
+  <div id="viewport">
+    <div id="stage">
+      <div id="flow"></div>
+      <div id="seam"></div>
+    </div>
+  </div>
+
+  <div id="footer">
+    <div id="progress"><i></i></div>
+    <div id="footmeta"><span class="ch"></span><span class="pg"></span></div>
+  </div>
+
+  <!-- Cover -->
+  <div id="cover" class="screen"></div>
+  <!-- Table of contents -->
+  <div id="toc" class="screen"></div>
+
+  <!-- corner buttons -->
+  <button id="btnMark" class="corner" aria-label="Bookmarks">
+    <svg viewBox="0 0 24 24"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"/></svg>
+  </button>
+  <button id="btnMenu" class="corner" aria-label="Menu">
+    <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+
+  <div id="scrim"></div>
+
+  <!-- Menu modal -->
+  <div id="menu" class="modal" role="dialog" aria-label="Reading menu">
+    <h2>Reading Settings<span class="x" data-close>&times;</span></h2>
+    <div class="row"><label>Theme</label>
+      <div class="segs" id="segTheme">
+        <div class="seg" data-theme="light">Light</div>
+        <div class="seg" data-theme="sepia">Sepia</div>
+        <div class="seg" data-theme="dark">Dark</div>
+      </div>
+    </div>
+    <div class="row"><label>Text size</label>
+      <div class="segs" id="segSize">
+        <div class="seg" data-size="small">Small</div>
+        <div class="seg" data-size="medium">Medium</div>
+        <div class="seg" data-size="big">Big</div>
+      </div>
+    </div>
+    <div class="row"><label>Page animation</label>
+      <div class="segs" id="segAnim">
+        <div class="seg" data-anim="slide">Slide</div>
+        <div class="seg" data-anim="curl">Curl</div>
+        <div class="seg" data-anim="none">None</div>
+      </div>
+    </div>
+    <div class="row">
+      <button class="btn ghost" id="mLib">&larr; Back to library</button>
+      <button class="btn ghost" id="mToc" style="margin-top:8px;">Chapters &amp; go to chapter</button>
+      <button class="btn ghost" id="mFull" style="margin-top:8px;">Fullscreen</button>
+    </div>
+    <div class="row"><label>Save / Export</label>
+      <button class="btn ghost" id="mPdf">Export as PDF (print)</button>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button class="btn ghost mini" id="mExport" style="flex:1;">Export notes</button>
+        <button class="btn ghost mini" id="mImport" style="flex:1;">Import notes</button>
+      </div>
+      <input type="file" id="fileImport" accept="application/json" style="display:none;">
+    </div>
+  </div>
+
+  <!-- Chapter jump modal -->
+  <div id="chapters" class="modal" role="dialog" aria-label="Chapters">
+    <h2>Chapters<span class="x" data-close>&times;</span></h2>
+    <div id="chapList"></div>
+  </div>
+
+  <!-- PDF choice modal -->
+  <div id="pdf" class="modal" role="dialog" aria-label="Export PDF">
+    <h2>Export as PDF<span class="x" data-close>&times;</span></h2>
+    <p style="font-size:13px;color:var(--ink-soft);margin:0 0 14px;">Your device's print dialog opens next — choose “Save as PDF”, paper size, and margins there.</p>
+    <button class="btn" id="pdfChap">This chapter only</button>
+    <button class="btn ghost" id="pdfAll" style="margin-top:8px;">Whole novel</button>
+  </div>
+
+  <!-- Bookmarks modal -->
+  <div id="marks" class="modal" role="dialog" aria-label="Bookmarks">
+    <h2>Bookmarks<span class="x" data-close>&times;</span></h2>
+    <button class="btn" id="addMark">+ Bookmark this page</button>
+    <div id="markList" style="margin-top:14px;"></div>
+  </div>
+
+  <!-- Add/Edit bookmark modal -->
+  <div id="markEdit" class="modal" role="dialog" aria-label="Add bookmark">
+    <h2 id="markEditTitle">New Bookmark<span class="x" data-close>&times;</span></h2>
+    <div class="row"><label>Emoji</label><div class="emoji-pick" id="emojiPick"></div></div>
+    <div class="row"><label>Note (optional)</label><textarea class="note" id="markNote" placeholder="A note for this page…"></textarea></div>
+    <button class="btn" id="markSave">Save bookmark</button>
+  </div>
+
+  <div id="printroot"></div>
+
+<script>
+/* ================= NOVEL DATA (injected by build_novel.py) ================= */
+const NOVEL = JSON.parse(Android.getNovel());
+/* NOVEL = { id, title, author, cover:{image, subtitle}, chapters:[{title, html}] } */
+
+(function(){
+  "use strict";
+  const $ = s => document.querySelector(s);
+  const KEY = "mhn:" + NOVEL.id;
+  const EMOJIS = ["🔖","⭐","❤️","😀","😮","😢","🤔","💡","🌟","📖"];
+  const SIZES = { small:17, medium:20, big:24 };
+
+  const flow = $("#flow"), stage = $("#stage"), seam = $("#seam");
+  const footer = $("#footer"), pbar = $("#progress>i");
+  const chEl = $("#footmeta .ch"), pgEl = $("#footmeta .pg");
+
+  let state = {
+    theme:"light", size:"medium", anim:"slide",
+    view:"cover",           // cover | toc | reading
+    chapter:0, page:0, pages:1, colW:1,
+    bookmarks:[], overlay:false
+  };
+  let editing = { emoji:EMOJIS[0], id:null };
+
+  /* ---------- persistence ---------- */
+  function load(){
+    try{
+      const raw = localStorage.getItem(KEY);
+      if(raw){ const d = JSON.parse(raw);
+        Object.assign(state, {
+          theme:d.theme||state.theme, size:d.size||state.size, anim:d.anim||state.anim,
+          bookmarks:Array.isArray(d.bookmarks)?d.bookmarks:[]
+        });
+        if(d.pos && typeof d.pos.chapter==="number"){ state._resume = d.pos; }
+      }
+    }catch(e){}
+  }
+  let saveTimer=null;
+  function save(){
+    try{
+      localStorage.setItem(KEY, JSON.stringify({
+        theme:state.theme, size:state.size, anim:state.anim,
+        bookmarks:state.bookmarks,
+        pos:{ chapter:state.chapter, bi:firstVisibleBlock() }
+      }));
+      if(state.view==="reading") Android.onProgress(state.chapter);
+    }catch(e){}
+  }
+  function saveSoon(){ clearTimeout(saveTimer); saveTimer=setTimeout(save,400); }
+
+  /* ---------- theme / size / anim ---------- */
+  function applyTheme(){ document.documentElement.setAttribute("data-theme", state.theme);
+    Android.onThemeColor(getComputedStyle(document.documentElement).getPropertyValue("--bg").trim());
+    markSeg("#segTheme","theme",state.theme); }
+  function applySize(){ document.documentElement.style.setProperty("--fs", SIZES[state.size]+"px");
+    markSeg("#segSize","size",state.size); }
+  function applyAnim(){ document.documentElement.style.setProperty("--anim-ms", state.anim==="curl"?"460ms":"280ms");
+    markSeg("#segAnim","anim",state.anim); }
+  function markSeg(sel,attr,val){ document.querySelectorAll(sel+" .seg").forEach(s=>{
+    s.classList.toggle("on", s.getAttribute("data-"+attr)===val); }); }
+
+  /* ---------- layout / pagination ---------- */
+  function computeMargins(){
+    const w = window.innerWidth, h = window.innerHeight;
+    const m = Math.max(24, Math.min(72, Math.round(w*0.07)));
+    const t = Math.max(30, Math.min(80, Math.round(h*0.055)));
+    document.documentElement.style.setProperty("--m", m+"px");
+    document.documentElement.style.setProperty("--t", t+"px");
+  }
+  function measure(){
+    if(state.view!=="reading") return;
+    computeMargins();
+    flow.classList.remove("animate");
+    flow.style.transform = "translateX(0px)";     // reset so measurements are absolute
+    const colW = stage.clientWidth || 1;
+    state.colW = colW;
+    flow.style.columnWidth = colW+"px";
+    flow.style.height = stage.clientHeight+"px";
+    void flow.offsetWidth;                          // force reflow
+    state.pages = Math.max(1, Math.round(flow.scrollWidth / colW));
+  }
+  function layout(preserveBi){
+    if(state.view!=="reading") return;
+    measure();
+    const target = (preserveBi!=null) ? pageOfBlock(preserveBi) : Math.min(state.page, state.pages-1);
+    goToPage(Math.max(0, target), false);
+  }
+  function renderChapter(ci){
+    state.chapter = Math.max(0, Math.min(NOVEL.chapters.length-1, ci));
+    const c = NOVEL.chapters[state.chapter];
+    flow.innerHTML =
+      '<div class="chap-open"><div class="kicker">Chapter '+(state.chapter+1)+'</div>'+
+      '<div class="title">'+escapeHtml(c.title)+'</div></div>' + c.html;
+    // index top-level blocks for anchoring
+    let bi=0; for(const el of flow.children){ el.setAttribute("data-bi", bi++); }
+  }
+  function currentTX(){ const m=/translateX\((-?\d+(?:\.\d+)?)px\)/.exec(flow.style.transform); return m?parseFloat(m[1]):0; }
+  function pageOfBlock(bi){
+    const el = flow.querySelector('[data-bi="'+bi+'"]');
+    if(!el) return 0;
+    const sr = stage.getBoundingClientRect(), er = el.getBoundingClientRect();
+    const x = (er.left - sr.left) - currentTX();   // undo whatever transform is applied
+    return Math.max(0, Math.floor((x + 2) / state.colW));
+  }
+  function firstVisibleBlock(){
+    if(state.view!=="reading") return 0;
+    const sr = stage.getBoundingClientRect();
+    let best=0, bestLeft=Infinity;
+    for(const el of flow.children){
+      const r = el.getBoundingClientRect();
+      if(r.right > sr.left+1 && r.left < sr.right-1){ // in view horizontally
+        if(r.left < bestLeft){ bestLeft=r.left; best=parseInt(el.getAttribute("data-bi")||"0",10); }
+      }
+    }
+    return best;
+  }
+  function goToPage(p, animate, dir){
+    p = Math.max(0, Math.min(state.pages-1, p));
+    state.page = p;
+    const x = -p*state.colW;
+    if(animate && state.anim!=="none"){
+      flow.classList.add("animate");
+      if(state.anim==="curl") curlSeam(dir);
+    } else {
+      flow.classList.remove("animate");
+    }
+    flow.style.transform = "translateX("+x+"px)";
+    updateChrome(); saveSoon();
+  }
+  function curlSeam(dir){
+    seam.style.transition="none";
+    seam.style.transform = dir<0 ? "scaleX(-1)" : "none";
+    seam.style.opacity="0";
+    void seam.offsetWidth;
+    seam.style.transition="opacity 220ms ease";
+    seam.style.opacity="1";
+    setTimeout(()=>{ seam.style.transition="opacity 240ms ease"; seam.style.opacity="0"; }, 200);
+  }
+
+  /* ---------- navigation ---------- */
+  function next(){
+    if(state.page < state.pages-1){ goToPage(state.page+1, true, +1); }
+    else if(state.chapter < NOVEL.chapters.length-1){
+      renderChapter(state.chapter+1); measure(); goToPage(0, false); save();
+    }
+  }
+  function prev(){
+    if(state.page > 0){ goToPage(state.page-1, true, -1); }
+    else if(state.chapter > 0){
+      renderChapter(state.chapter-1); measure(); goToPage(state.pages-1, false); save();
+    }
+  }
+  function openChapter(ci, bi){
+    setView("reading");
+    renderChapter(ci); measure();
+    goToPage(bi!=null ? pageOfBlock(bi) : 0, false);
+  }
+
+  /* ---------- chrome (footer + buttons) ---------- */
+  function updateChrome(){
+    const c = NOVEL.chapters[state.chapter];
+    chEl.textContent = c ? c.title : "";
+    pgEl.textContent = (state.page+1)+" / "+state.pages;
+    const frac = (state.chapter + (state.pages>1?state.page/(state.pages-1):0)) / NOVEL.chapters.length;
+    pbar.style.width = Math.min(100, Math.max(0, frac*100)).toFixed(1)+"%";
+  }
+  function showOverlay(on){
+    state.overlay = on;
+    $("#btnMenu").classList.toggle("show", on);
+    $("#btnMark").classList.toggle("show", on);
+    footer.style.opacity = on ? "1" : "";
+  }
+
+  /* ---------- modals ---------- */
+  function openModal(id){
+    closeModals(true);
+    $("#scrim").classList.add("on");
+    $(id).classList.add("on");
+  }
+  function closeModals(keepScrim){
+    document.querySelectorAll(".modal.on").forEach(m=>m.classList.remove("on"));
+    if(!keepScrim) $("#scrim").classList.remove("on");
+  }
+  $("#scrim").addEventListener("click", ()=>{ closeModals(false); });
+  document.querySelectorAll("[data-close]").forEach(x=>x.addEventListener("click",()=>closeModals(false)));
+
+  /* ---------- gestures ---------- */
+  const vp = $("#viewport");
+  let sx=0, sy=0, st=0, moved=false;
+  vp.addEventListener("pointerdown", e=>{ sx=e.clientX; sy=e.clientY; st=Date.now(); moved=false; }, {passive:true});
+  vp.addEventListener("pointermove", e=>{ if(Math.abs(e.clientX-sx)>8||Math.abs(e.clientY-sy)>8) moved=true; }, {passive:true});
+  vp.addEventListener("pointerup", e=>{
+    const dx=e.clientX-sx, dy=e.clientY-sy, dt=Date.now()-st;
+    if(state.overlay){ showOverlay(false); return; }
+    if(Math.abs(dx)>44 && Math.abs(dx)>Math.abs(dy)*1.3){ dx<0?next():prev(); return; }
+    if(!moved && dt<600){
+      const z = e.clientX / window.innerWidth;
+      if(z<0.25) prev(); else if(z>0.75) next(); else showOverlay(true);
+    }
+  });
+  // keyboard (nice on tablets with keyboard / desktop testing)
+  window.addEventListener("keydown", e=>{
+    if(state.view!=="reading") return;
+    if(e.key==="ArrowRight"||e.key===" ") next();
+    else if(e.key==="ArrowLeft") prev();
+  });
+
+  /* ---------- menu wiring ---------- */
+  $("#btnMenu").addEventListener("click", ()=>openModal("#menu"));
+  $("#btnMark").addEventListener("click", ()=>{ renderMarkList(); openModal("#marks"); });
+  document.querySelectorAll("#segTheme .seg").forEach(s=>s.addEventListener("click",()=>{
+    state.theme=s.getAttribute("data-theme"); applyTheme(); save(); }));
+  document.querySelectorAll("#segSize .seg").forEach(s=>s.addEventListener("click",()=>{
+    const bi=firstVisibleBlock(); state.size=s.getAttribute("data-size"); applySize(); layout(bi); save(); }));
+  document.querySelectorAll("#segAnim .seg").forEach(s=>s.addEventListener("click",()=>{
+    state.anim=s.getAttribute("data-anim"); applyAnim(); save(); }));
+  $("#mToc").addEventListener("click", ()=>{ renderChapList(); openModal("#chapters"); });
+  $("#mFull").addEventListener("click", toggleFull);
+  $("#mLib").addEventListener("click", ()=>{ save(); Android.close(); });
+  $("#mPdf").addEventListener("click", ()=>openModal("#pdf"));
+  $("#pdfChap").addEventListener("click", ()=>{ closeModals(false); printContent(false); });
+  $("#pdfAll").addEventListener("click", ()=>{ closeModals(false); printContent(true); });
+  $("#mExport").addEventListener("click", exportData);
+  $("#mImport").addEventListener("click", ()=>$("#fileImport").click());
+  $("#fileImport").addEventListener("change", importData);
+
+  function toggleFull(){
+    Android.toggleFullscreen();
+  }
+
+  /* ---------- chapter list ---------- */
+  function renderChapList(){
+    const box=$("#chapList"); box.innerHTML="";
+    NOVEL.chapters.forEach((c,i)=>{
+      const b=document.createElement("button");
+      b.className="toc-item"+(i===state.chapter?" cur":"");
+      b.innerHTML='<span class="n">'+(i+1)+'</span><span>'+escapeHtml(c.title)+'</span>';
+      b.addEventListener("click",()=>{ closeModals(false); openChapter(i); });
+      box.appendChild(b);
+    });
+  }
+
+  /* ---------- bookmarks ---------- */
+  function renderMarkList(){
+    const box=$("#markList"); box.innerHTML="";
+    if(!state.bookmarks.length){ box.innerHTML='<div class="empty">No bookmarks yet.</div>'; return; }
+    const items=[...state.bookmarks].sort((a,b)=> a.chapter-b.chapter || a.bi-b.bi);
+    items.forEach(bm=>{
+      const b=document.createElement("div"); b.className="bm-item";
+      const ch=NOVEL.chapters[bm.chapter];
+      b.innerHTML='<span class="bm-emoji">'+(bm.emoji||"🔖")+'</span>'+
+        '<span class="bm-body"><span class="bm-loc">'+escapeHtml(ch?ch.title:"—")+'</span>'+
+        (bm.note?'<span class="bm-note">'+escapeHtml(bm.note)+'</span>':'')+
+        '<span class="bm-time">'+fmtTime(bm.time)+'</span></span>'+
+        '<span class="bm-del" title="Delete">🗑</span>';
+      b.querySelector(".bm-body").addEventListener("click",()=>{ closeModals(false); openChapter(bm.chapter, bm.bi); });
+      b.querySelector(".bm-emoji").addEventListener("click",()=>{ closeModals(false); openChapter(bm.chapter, bm.bi); });
+      b.querySelector(".bm-del").addEventListener("click",(ev)=>{ ev.stopPropagation();
+        state.bookmarks=state.bookmarks.filter(x=>x.id!==bm.id); save(); renderMarkList(); });
+      box.appendChild(b);
+    });
+  }
+  $("#addMark").addEventListener("click",()=>{
+    editing={ emoji:EMOJIS[0], id:null, chapter:state.chapter, bi:firstVisibleBlock() };
+    $("#markEditTitle").firstChild.textContent="New Bookmark";
+    $("#markNote").value="";
+    renderEmojiPick();
+    openModal("#markEdit");
+  });
+  function renderEmojiPick(){
+    const box=$("#emojiPick"); box.innerHTML="";
+    EMOJIS.forEach(e=>{ const s=document.createElement("span");
+      s.className="e"+(e===editing.emoji?" on":""); s.textContent=e;
+      s.addEventListener("click",()=>{ editing.emoji=e; renderEmojiPick(); }); box.appendChild(s); });
+  }
+  $("#markSave").addEventListener("click",()=>{
+    state.bookmarks.push({ id:"b"+Date.now()+Math.random().toString(36).slice(2,6),
+      chapter:editing.chapter, bi:editing.bi, emoji:editing.emoji,
+      note:$("#markNote").value.trim(), time:Date.now() });
+    save(); closeModals(false); renderMarkList(); openModal("#marks");
+  });
+
+  /* ---------- export / import ---------- */
+  function exportData(){
+    Android.saveText((NOVEL.id||"novel")+"-notes.json", JSON.stringify({
+      novel:NOVEL.id, title:NOVEL.title, exported:Date.now(),
+      settings:{theme:state.theme,size:state.size,anim:state.anim},
+      bookmarks:state.bookmarks
+    },null,2));
+  }
+  function importData(e){
+    const f=e.target.files[0]; if(!f) return;
+    const r=new FileReader();
+    r.onload=()=>{ try{
+      const d=JSON.parse(r.result);
+      if(Array.isArray(d.bookmarks)){
+        const byId={}; state.bookmarks.forEach(b=>byId[b.id]=b);
+        d.bookmarks.forEach(b=>{ if(b&&b.id) byId[b.id]=b; });
+        state.bookmarks=Object.values(byId);
+      }
+      if(d.settings){ state.theme=d.settings.theme||state.theme; state.size=d.settings.size||state.size;
+        state.anim=d.settings.anim||state.anim; applyTheme(); applySize(); applyAnim(); if(state.view==="reading") layout(firstVisibleBlock()); }
+      save(); renderMarkList();
+      alert("Imported "+(Array.isArray(d.bookmarks)?d.bookmarks.length:0)+" bookmark(s).");
+    }catch(err){ alert("Could not read that file."); } };
+    r.readAsText(f); e.target.value="";
+  }
+
+  /* ---------- print / pdf ---------- */
+  function printContent(all){
+    const root=$("#printroot"); root.innerHTML="";
+    if(all && (NOVEL.cover||NOVEL.title)){
+      const cov=document.createElement("div"); cov.className="p-cover";
+      cov.innerHTML='<h1>'+escapeHtml(NOVEL.title||"")+'</h1>'+
+        (NOVEL.author?'<div class="a">'+escapeHtml(NOVEL.author)+'</div>':'');
+      root.appendChild(cov);
+    }
+    const list = all ? NOVEL.chapters : [NOVEL.chapters[state.chapter]];
+    list.forEach(c=>{ const s=document.createElement("section"); s.className="p-chap";
+      s.innerHTML='<h2 class="p-title">'+escapeHtml(c.title)+'</h2>'+c.html; root.appendChild(s); });
+    setTimeout(()=>Android.print((NOVEL.title||"Novel")+(all?"":" - "+list[0].title)),60);
+  }
+
+  /* ---------- cover & toc ---------- */
+  function buildCover(){
+    const el=$("#cover");
+    el.innerHTML =
+      (NOVEL.cover&&NOVEL.cover.image?'<img class="cov-img" src="'+NOVEL.cover.image+'" alt="">':'')+
+      '<div class="cov-title">'+escapeHtml(NOVEL.title||"Untitled")+'</div>'+
+      (NOVEL.cover&&NOVEL.cover.subtitle?'<div class="cov-sub">'+escapeHtml(NOVEL.cover.subtitle)+'</div>':'')+
+      (NOVEL.author?'<div class="cov-author">'+escapeHtml(NOVEL.author)+'</div>':'')+
+      '<div class="cov-tap">Tap to begin</div>';
+    el.addEventListener("click",()=>setView("toc"));
+  }
+  function buildToc(){
+    const el=$("#toc");
+    let items='';
+    NOVEL.chapters.forEach((c,i)=>{ items+='<div class="titem" data-i="'+i+'"><span class="tn">'+(i+1)+'</span><span class="tt">'+escapeHtml(c.title)+'</span></div>'; });
+    el.innerHTML='<h1>'+escapeHtml(NOVEL.title||"Contents")+'</h1>'+
+      '<div class="tsub">'+NOVEL.chapters.length+' chapters'+(NOVEL.author?' · '+escapeHtml(NOVEL.author):'')+'</div>'+
+      '<div class="tlist">'+items+'</div>'+
+      '<div class="tback">Back to cover</div>';
+    el.querySelectorAll(".titem").forEach(t=>t.addEventListener("click",()=>openChapter(parseInt(t.getAttribute("data-i"),10))));
+    el.querySelector(".tback").addEventListener("click",()=>setView("cover"));
+  }
+  function setView(v){
+    state.view=v;
+    $("#cover").classList.toggle("on", v==="cover");
+    $("#toc").classList.toggle("on", v==="toc");
+    footer.style.display = v==="reading" ? "flex" : "none";
+    if(v!=="reading") showOverlay(false);
+  }
+
+  /* ---------- helpers ---------- */
+  function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"']/g,m=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[m])); }
+  function fmtTime(t){ try{ const d=new Date(t);
+    return d.toLocaleDateString(undefined,{day:"numeric",month:"short"})+" "+d.toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}); }catch(e){ return ""; } }
+
+  /* ---------- wake lock ---------- */
+  let wake=null;
+  function requestWake(){}
+  document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") requestWake(); });
+
+  /* ---------- resize ---------- */
+  let rz=null;
+  window.addEventListener("resize",()=>{ clearTimeout(rz); rz=setTimeout(()=>{ if(state.view==="reading") layout(firstVisibleBlock()); },140); });
+  window.addEventListener("orientationchange",()=>{ setTimeout(()=>{ if(state.view==="reading") layout(firstVisibleBlock()); },260); });
+
+  /* ---------- Android back button: true = handled here ---------- */
+  window.PPback = function(){
+    if(document.querySelector(".modal.on")){ closeModals(false); return true; }
+    if(state.overlay){ showOverlay(false); return true; }
+    if(state.view==="toc"){ setView("cover"); return true; }
+    save(); return false;
+  };
+
+  /* ---------- boot ---------- */
+  function boot(){
+    load(); applyTheme(); applySize(); applyAnim();
+    buildCover(); buildToc();
+    requestWake();
+    if(state._resume){ openChapter(state._resume.chapter, state._resume.bi); }
+    else { setView("cover"); }
+  }
+  boot();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Full moon above an open book, inside the 72dp adaptive-icon safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#C9A55E"
+        android:pathData="M54,30m-13,0a13,13 0,1 1,26 0a13,13 0,1 1,-26 0" />
+    <path
+        android:fillColor="#F3E9D2"
+        android:pathData="M53,56 C46,51 37,50 30,51 L30,76 C37,75 46,76 53,81 Z" />
+    <path
+        android:fillColor="#E6D6B4"
+        android:pathData="M55,56 C62,51 71,50 78,51 L78,76 C71,75 62,76 55,81 Z" />
+</vector>

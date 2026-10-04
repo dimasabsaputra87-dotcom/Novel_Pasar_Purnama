@@ -33,3 +33,12 @@ $adb="$env:ANDROID_HOME\platform-tools\adb.exe"
 & $adb install -r app\build\outputs\apk\debug\app-debug.apk
 & $adb shell am start -n com.dimas.pasarpurnama/.MainActivity
 ```
+
+### Release APK (for installing on devices, e.g. the Huawei tablet)
+
+Signing is read from `keystore.properties` in the project root (git-ignored), which points at `D:\DIMAS\android-sdk-tools\keys\pasarpurnama-release.jks`. Keep that keystore and its password backed up: updates only install over an existing copy when signed with the same key. Without `keystore.properties` the release build is unsigned.
+
+```powershell
+& "D:\DIMAS\android-sdk-tools\gradle-8.9\bin\gradle.bat" --no-daemon assembleRelease
+# APK: app\build\outputs\apk\release\app-release.apk  (bump versionCode/versionName in app/build.gradle.kts for each new release)
+```

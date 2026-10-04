@@ -16,6 +16,11 @@ android {
         targetSdk = 35
         versionCode = 2
         versionName = "1.1"
+
+        // Supabase project (accounts + per-user library). The publishable key is meant to ship in
+        // the app; data access is enforced by the row-level security in supabase/setup.sql.
+        buildConfigField("String", "SUPABASE_URL", "\"https://cfzdmsgiahqvhzfamzcb.supabase.co\"")
+        buildConfigField("String", "SUPABASE_KEY", "\"sb_publishable_7Xa9IJ0J3gXAAfHheRbcyw_zcytlLhZ\"")
     }
 
     // Release signing comes from keystore.properties (git-ignored, machine-specific).
@@ -45,6 +50,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 }
 

@@ -25,23 +25,37 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.systemBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
+import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,6 +83,9 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -81,10 +98,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
-        val repo = BookRepository(this)
+        val auth = AuthManager(this)
         setContent {
             MaterialTheme(colorScheme = LibraryColors) {
-                LibraryScreen(repo)
+                AppRoot(auth)
             }
         }
     }
@@ -101,18 +118,164 @@ private val LibraryColors = darkColorScheme(
     onSurfaceVariant = Color(0xFF8B877E),
 )
 
+/** Login screen until there is a session, then the signed-in account's own library. */
+@Composable
+private fun AppRoot(auth: AuthManager) {
+    val context = LocalContext.current
+    var user by remember { mutableStateOf(auth.user) }
+    val u = user
+    if (u == null) {
+        LoginScreen(auth, onSignedIn = { user = it })
+    } else {
+        val repo = remember(u.userId) {
+            BookRepository.claimLegacyData(context, u.userId)
+            BookRepository(context, u.userId)
+        }
+        LibraryScreen(repo, auth, u, onSignedOut = { user = null })
+    }
+}
+
+@Composable
+private fun LoginScreen(auth: AuthManager, onSignedIn: (UserSession) -> Unit) {
+    val scope = rememberCoroutineScope()
+    var register by remember { mutableStateOf(false) }
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirm by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var isError by remember { mutableStateOf(false) }
+
+    fun submit() {
+        val mail = email.trim()
+        val problem = when {
+            !mail.contains('@') || !mail.contains('.') -> "Masukkan alamat email yang benar."
+            password.length < 6 -> "Password minimal 6 karakter."
+            register && password != confirm -> "Konfirmasi password tidak sama."
+            else -> null
+        }
+        if (problem != null) {
+            message = problem; isError = true
+            return
+        }
+        busy = true
+        message = null
+        scope.launch {
+            val result = withContext(Dispatchers.IO) {
+                runCatching { if (register) auth.signUp(mail, password) else auth.signIn(mail, password) }
+            }
+            busy = false
+            result.onSuccess { session ->
+                if (session != null) onSignedIn(session) else {
+                    register = false
+                    confirm = ""
+                    isError = false
+                    message = "Akun dibuat. Buka email konfirmasi yang dikirim ke $mail, lalu masuk di sini."
+                }
+            }.onFailure {
+                isError = true
+                message = Supabase.friendlyError(it)
+            }
+        }
+    }
+
+    Box(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).systemBarsPadding().imePadding(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).widthIn(max = 420.dp).fillMaxWidth()
+                .padding(horizontal = 28.dp, vertical = 32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(50)).background(Gold.copy(alpha = 0.92f)))
+            Spacer(Modifier.height(20.dp))
+            Text("Pasar Purnama", fontFamily = FontFamily.Serif, fontSize = 28.sp, color = Color(0xFFF3E9D2))
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (register) "Buat akun untuk perpustakaanmu sendiri" else "Masuk ke perpustakaanmu",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
+            Spacer(Modifier.height(28.dp))
+            OutlinedTextField(
+                value = email, onValueChange = { email = it }, label = { Text("Email") }, singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Next),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = password, onValueChange = { password = it }, label = { Text("Password") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = if (register) ImeAction.Next else ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { if (!busy) submit() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (register) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = confirm, onValueChange = { confirm = it }, label = { Text("Ulangi password") }, singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (!busy) submit() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            message?.let {
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    it, style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.Center,
+                    color = if (isError) Color(0xFFE8897D) else Gold,
+                )
+            }
+            Spacer(Modifier.height(22.dp))
+            Button(
+                onClick = { submit() }, enabled = !busy,
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+            ) {
+                if (busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp, color = Color(0xFF241C0E))
+                else Text(if (register) "Daftar" else "Masuk")
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { register = !register; message = null }, enabled = !busy) {
+                Text(if (register) "Sudah punya akun? Masuk" else "Belum punya akun? Daftar")
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun LibraryScreen(repo: BookRepository) {
+private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSession, onSignedOut: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var refresh by remember { mutableIntStateOf(0) }
     var books by remember { mutableStateOf<List<Book>?>(null) }
     var toDelete by remember { mutableStateOf<Book?>(null) }
     var showHelp by remember { mutableStateOf(false) }
+    var showAccount by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    var syncing by remember { mutableStateOf(false) }
+    var manualSync by remember { mutableStateOf(false) }
 
+    // Show the local copy right away, then sync with the account and show the merged result.
     LaunchedEffect(refresh) {
         books = withContext(Dispatchers.IO) { repo.list() }
+        syncing = true
+        val result = withContext(Dispatchers.IO) { runCatching { repo.sync(auth) } }
+        syncing = false
+        if (auth.user == null) {
+            Toast.makeText(context, "Sesi berakhir, silakan masuk lagi.", Toast.LENGTH_LONG).show()
+            onSignedOut()
+            return@LaunchedEffect
+        }
+        result.onSuccess {
+            books = withContext(Dispatchers.IO) { repo.list() }
+            if (manualSync) Toast.makeText(context, "Perpustakaan sudah tersinkron", Toast.LENGTH_SHORT).show()
+        }.onFailure {
+            if (manualSync) Toast.makeText(context, "Belum tersinkron: ${Supabase.friendlyError(it)}", Toast.LENGTH_LONG).show()
+        }
+        manualSync = false
     }
 
     // Reload when coming back from the reader so the progress bars update.
@@ -138,8 +301,24 @@ private fun LibraryScreen(repo: BookRepository) {
             TopAppBar(
                 title = { Text("Perpustakaan", fontFamily = FontFamily.Serif) },
                 actions = {
+                    IconButton(onClick = { manualSync = true; refresh++ }, enabled = !syncing) {
+                        Icon(Icons.Filled.Refresh, contentDescription = "Sinkronkan")
+                    }
                     IconButton(onClick = { showHelp = true }) {
                         Icon(Icons.Filled.Info, contentDescription = "Cara menambah buku")
+                    }
+                    Box {
+                        IconButton(onClick = { showAccount = true }) {
+                            Icon(Icons.Filled.AccountCircle, contentDescription = "Akun")
+                        }
+                        DropdownMenu(expanded = showAccount, onDismissRequest = { showAccount = false }) {
+                            DropdownMenuItem(text = { Text(user.email) }, onClick = {}, enabled = false)
+                            DropdownMenuItem(
+                                text = { Text("Keluar") },
+                                leadingIcon = { Icon(Icons.AutoMirrored.Filled.ExitToApp, contentDescription = null) },
+                                onClick = { showAccount = false; confirmSignOut = true },
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
@@ -172,7 +351,7 @@ private fun LibraryScreen(repo: BookRepository) {
                     BookCard(
                         book = book,
                         palette = index,
-                        progress = repo.progress(book.id),
+                        progress = book.progress,
                         onOpen = {
                             readerLauncher.launch(
                                 Intent(context, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_ID, book.id)
@@ -182,6 +361,12 @@ private fun LibraryScreen(repo: BookRepository) {
                     )
                 }
             }
+        }
+        if (syncing) {
+            LinearProgressIndicator(
+                Modifier.fillMaxWidth().padding(top = padding.calculateTopPadding()).height(2.dp),
+                color = Gold, trackColor = Color.Transparent,
+            )
         }
     }
 
@@ -203,6 +388,27 @@ private fun LibraryScreen(repo: BookRepository) {
         )
     }
 
+    if (confirmSignOut) {
+        AlertDialog(
+            onDismissRequest = { confirmSignOut = false },
+            title = { Text("Keluar dari akun?") },
+            text = { Text("Buku dan posisi bacamu tetap tersimpan di akun ${user.email}. Masuk lagi kapan saja untuk melanjutkan.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmSignOut = false
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            runCatching { repo.sync(auth) }
+                            auth.signOut()
+                        }
+                        onSignedOut()
+                    }
+                }) { Text("Keluar") }
+            },
+            dismissButton = { TextButton(onClick = { confirmSignOut = false }) { Text("Batal") } },
+        )
+    }
+
     if (showHelp) {
         AlertDialog(
             onDismissRequest = { showHelp = false },
@@ -213,7 +419,8 @@ private fun LibraryScreen(repo: BookRepository) {
                         "• File .html hasil build_novel.py (seperti Pasar Purnama Jilid 1), atau\n" +
                         "• File .json berisi data NOVEL.\n\n" +
                         "Buku dengan judul dan subjudul (mis. \"Jilid 2\") yang sama akan diperbarui, bukan diduplikasi.\n\n" +
-                        "Tekan lama sampul buku tambahan untuk menghapusnya."
+                        "Tekan lama sampul buku tambahan untuk menghapusnya.\n\n" +
+                        "Buku, posisi baca, dan markah tersimpan di akunmu, jadi ikut muncul saat masuk di perangkat lain."
                 )
             },
             confirmButton = { TextButton(onClick = { showHelp = false }) { Text("Oke") } },

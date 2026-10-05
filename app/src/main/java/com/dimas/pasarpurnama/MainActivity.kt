@@ -252,6 +252,9 @@ private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSes
     var refresh by remember { mutableIntStateOf(0) }
     var books by remember { mutableStateOf<List<Book>?>(null) }
     var toDelete by remember { mutableStateOf<Book?>(null) }
+    var options by remember { mutableStateOf<Book?>(null) }
+    var illusTarget by remember { mutableStateOf<Book?>(null) }
+    var illusReport by remember { mutableStateOf<String?>(null) }
     var showHelp by remember { mutableStateOf(false) }
     var showAccount by remember { mutableStateOf(false) }
     var confirmSignOut by remember { mutableStateOf(false) }
@@ -291,6 +294,25 @@ private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSes
                 refresh++
             }.onFailure {
                 Toast.makeText(context, "Gagal menambah buku: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    val illusLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val book = illusTarget ?: return@rememberLauncherForActivityResult
+        illusTarget = null
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching { repo.importIllustrations(book.id, uris) } }
+            result.onSuccess { r ->
+                if (r.skipped.isEmpty()) {
+                    Toast.makeText(context, "${r.added.size} ilustrasi ditambahkan", Toast.LENGTH_SHORT).show()
+                } else {
+                    illusReport = "${r.added.size} ilustrasi ditambahkan.\n\nDilewati:\n" + r.skipped.joinToString("\n") { "• $it" }
+                }
+                if (r.added.isNotEmpty()) refresh++ // uploads them to the account
+            }.onFailure {
+                Toast.makeText(context, "Gagal mengimpor ilustrasi: ${it.message}", Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -357,7 +379,7 @@ private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSes
                                 Intent(context, ReaderActivity::class.java).putExtra(ReaderActivity.EXTRA_BOOK_ID, book.id)
                             )
                         },
-                        onLongPress = { if (!book.bundled) toDelete = book },
+                        onLongPress = { options = book },
                     )
                 }
             }
@@ -368,6 +390,46 @@ private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSes
                 color = Gold, trackColor = Color.Transparent,
             )
         }
+    }
+
+    options?.let { book ->
+        val imported = remember(book.id, refresh) { repo.importedIllustrationCount(book.id) }
+        AlertDialog(
+            onDismissRequest = { options = null },
+            title = { Text("${book.title} ${book.subtitle}".trim()) },
+            text = {
+                Column {
+                    TextButton(onClick = {
+                        options = null
+                        illusTarget = book
+                        illusLauncher.launch(arrayOf("image/*", "application/zip"))
+                    }) { Text("Impor ilustrasi") }
+                    if (imported > 0) {
+                        TextButton(onClick = {
+                            options = null
+                            scope.launch {
+                                withContext(Dispatchers.IO) { repo.deleteIllustrations(book.id) }
+                                Toast.makeText(context, "Ilustrasi impor dihapus", Toast.LENGTH_SHORT).show()
+                                refresh++
+                            }
+                        }) { Text("Hapus ilustrasi impor ($imported)") }
+                    }
+                    if (!book.bundled) {
+                        TextButton(onClick = { options = null; toDelete = book }) { Text("Hapus buku") }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { options = null }) { Text("Tutup") } },
+        )
+    }
+
+    illusReport?.let { report ->
+        AlertDialog(
+            onDismissRequest = { illusReport = null },
+            title = { Text("Impor ilustrasi") },
+            text = { Text(report, modifier = Modifier.verticalScroll(rememberScrollState())) },
+            confirmButton = { TextButton(onClick = { illusReport = null }) { Text("Oke") } },
+        )
     }
 
     toDelete?.let { book ->
@@ -419,8 +481,11 @@ private fun LibraryScreen(repo: BookRepository, auth: AuthManager, user: UserSes
                         "• File .html hasil build_novel.py (seperti Pasar Purnama Jilid 1), atau\n" +
                         "• File .json berisi data NOVEL.\n\n" +
                         "Buku dengan judul dan subjudul (mis. \"Jilid 2\") yang sama akan diperbarui, bukan diduplikasi.\n\n" +
-                        "Tekan lama sampul buku tambahan untuk menghapusnya.\n\n" +
-                        "Buku, posisi baca, dan markah tersimpan di akunmu, jadi ikut muncul saat masuk di perangkat lain."
+                        "Tekan lama sampul buku untuk mengimpor ilustrasi adegan, atau menghapus buku tambahan.\n\n" +
+                        "Ilustrasi: pilih gambar (atau file .zip berisi gambar) yang namanya memuat nomor bab dan adegan, " +
+                        "mis. bab01-adegan2.jpg. Gambar tampil di akhir adegan itu, tepat sebelum * * *.\n\n" +
+                        "Buku, posisi baca, markah, dan ilustrasi tersimpan di akunmu, jadi ikut muncul saat masuk di perangkat lain.",
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
                 )
             },
             confirmButton = { TextButton(onClick = { showHelp = false }) { Text("Oke") } },

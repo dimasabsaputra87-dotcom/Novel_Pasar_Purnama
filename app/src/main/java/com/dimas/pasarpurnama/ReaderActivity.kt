@@ -23,6 +23,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.webkit.WebViewAssetLoader
+import org.json.JSONObject
 
 /**
  * Hosts the original HTML reader (assets/reader/reader.html) in a WebView. The reader gets its
@@ -67,6 +68,10 @@ class ReaderActivity : ComponentActivity() {
 
         val assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/assets/", WebViewAssetLoader.AssetsPathHandler(this))
+            // Scene illustrations of this book (imported by the account, or bundled).
+            .addPathHandler("/illus/") { path ->
+                repo.openIllustration(bookId, path)?.let { WebResourceResponse("image/webp", null, it) }
+            }
             .build()
 
         webView = WebView(this).apply {
@@ -135,6 +140,20 @@ class ReaderActivity : ComponentActivity() {
         @JavascriptInterface
         fun getNovel(): String = repo.loadNovelJson(bookId)
             ?: """{"id":"missing","title":"Buku tidak ditemukan","cover":{},"chapters":[{"title":"-","html":"<p>Buku ini sudah dihapus.</p>"}]}"""
+
+        /**
+         * Scene illustrations as JSON: {"<bab>-<adegan>": {src, w, h}} (1-based). The reader puts
+         * each one at the end of its scene, right before the "* * *".
+         */
+        @JavascriptInterface
+        fun getIllustrations(): String {
+            val out = JSONObject()
+            for ((key, il) in repo.illustrations(bookId)) {
+                val (w, h) = repo.illustrationSize(bookId, il.fileName) ?: continue
+                out.put(key, JSONObject().put("src", "/illus/${il.fileName}?v=${il.version}").put("w", w).put("h", h))
+            }
+            return out.toString()
+        }
 
         @JavascriptInterface
         fun onProgress(chapter: Int) = repo.saveProgress(bookId, chapter)

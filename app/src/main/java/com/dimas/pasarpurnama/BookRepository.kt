@@ -1,11 +1,18 @@
 package com.dimas.pasarpurnama
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
+import android.provider.OpenableColumns
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.text.Normalizer
+import java.util.zip.ZipInputStream
 
 /**
  * One book in the library. The content is a "NOVEL" JSON object, the same shape that
@@ -25,17 +32,25 @@ data class Book(
     val progress: Int = -1,
 )
 
+/** A scene illustration: shown at the end of scene [scene] of chapter [bab] (both 1-based). */
+data class Illustration(val bab: Int, val scene: Int, val fileName: String, val version: Long)
+
+/** Result of [BookRepository.importIllustrations]: names added, and skipped files with the reason. */
+data class IllustrationImport(val added: List<String>, val skipped: List<String>)
+
 /**
  * The library of one account. Everything is stored locally under `filesDir/users/<userId>/` so
  * reading works offline, and [sync] mirrors it to Supabase: the `books` table holds one row per
  * book (progress + reader state such as bookmarks), the private `novels` bucket holds imported
- * book files at `<userId>/<bookId>.json`. Conflicts resolve by last write (`updatedAt`, ms).
+ * book files at `<userId>/<bookId>.json` and scene illustrations at
+ * `<userId>/illustrations/<bookId>/babNN-adeganM.webp`. Conflicts resolve by last write (`updatedAt`, ms).
  */
 class BookRepository(private val context: Context, private val userId: String) {
 
     private val userDir = userDir(context, userId)
     private val importDir = File(userDir, "books").apply { mkdirs() }
     private val libraryFile = File(userDir, "library.json")
+    private val illusDir = File(userDir, ILLUS)
 
     /** Bundled books plus imported ones; an imported book with the same id replaces the bundled one. */
     fun list(): List<Book> {
@@ -88,6 +103,7 @@ class BookRepository(private val context: Context, private val userId: String) {
 
     fun delete(id: String) {
         File(importDir, "$id.json").delete()
+        deleteIllustrations(id)
         edit { lib ->
             lib.books.remove(id)
             lib.deleted.add(id)
@@ -104,6 +120,114 @@ class BookRepository(private val context: Context, private val userId: String) {
     fun saveReaderState(id: String, json: String) = edit { lib ->
         lib.books.getOrPut(id) { Entry() }.apply { state = json; touch() }
     }
+
+    // ---------- scene illustrations ----------
+
+    /**
+     * Illustrations for one book, keyed "bab-adegan" ("1-2"). Bundled ones come from
+     * `assets/illustrations/<bookId>/`; the account's imported ones (same file name) replace them.
+     */
+    fun illustrations(id: String): Map<String, Illustration> {
+        val out = LinkedHashMap<String, Illustration>()
+        fun add(name: String, version: Long) {
+            val m = ILLUS_FILE.matchEntire(name) ?: return
+            val (bab, scene) = m.destructured
+            out["${bab.toInt()}-$scene"] = Illustration(bab.toInt(), scene.toInt(), name, version)
+        }
+        if (SAFE_ID.matches(id)) {
+            context.assets.list("$ILLUS/$id").orEmpty().forEach { add(it, 0) }
+            File(illusDir, id).listFiles().orEmpty().forEach { add(it.name, it.lastModified()) }
+        }
+        return out
+    }
+
+    /** Image bytes of one illustration (imported first, then bundled), or null. */
+    fun openIllustration(id: String, fileName: String): InputStream? {
+        if (!SAFE_ID.matches(id) || !ILLUS_FILE.matches(fileName)) return null
+        val f = File(illusDir, "$id/$fileName")
+        if (f.exists()) return f.inputStream()
+        return runCatching { context.assets.open("$ILLUS/$id/$fileName") }.getOrNull()
+    }
+
+    /** Pixel size of an illustration, so the reader can reserve its space before it loads. */
+    fun illustrationSize(id: String, fileName: String): Pair<Int, Int>? {
+        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        openIllustration(id, fileName)?.use { BitmapFactory.decodeStream(it, null, opts) } ?: return null
+        return if (opts.outWidth > 0) opts.outWidth to opts.outHeight else null
+    }
+
+    /**
+     * Imports illustrations for book [id] from image files and/or .zip files of images. The file
+     * name says where a picture goes: it must contain "bab <N>" and "adegan <M>" (bab01-adegan2.jpg,
+     * "Bab 1 Adegan 2.png"). Images are scaled to at most [MAX_ILLUS_WIDTH] px wide and stored as
+     * WebP; importing the same bab + adegan again replaces the picture.
+     */
+    fun importIllustrations(id: String, uris: List<Uri>): IllustrationImport {
+        require(SAFE_ID.matches(id)) { "Buku tidak dikenal" }
+        val novel = JSONObject(loadNovelJson(id) ?: error("Buku tidak ditemukan"))
+        val chapters = novel.getJSONArray("chapters")
+        val added = ArrayList<String>()
+        val skipped = ArrayList<String>()
+
+        fun take(name: String, bytes: ByteArray) {
+            val m = ILLUS_NAME.find(name)
+            if (m == null) { skipped += "$name (nama harus memuat bab dan adegan, mis. bab01-adegan1.jpg)"; return }
+            val bab = m.groupValues[1].toInt()
+            val scene = m.groupValues[2].toInt()
+            if (bab !in 1..chapters.length()) { skipped += "$name (buku ini hanya punya ${chapters.length()} bab)"; return }
+            val scenes = sceneCount(chapters.getJSONObject(bab - 1).optString("html"))
+            if (scene !in 1..scenes) { skipped += "$name (bab $bab hanya punya $scenes adegan)"; return }
+            val webp = toWebp(bytes)
+            if (webp == null) { skipped += "$name (bukan gambar)"; return }
+            val fileName = "bab%02d-adegan%d.webp".format(bab, scene)
+            val key = "$id/$fileName"
+            File(illusDir, "$key.part").apply { parentFile?.mkdirs(); writeBytes(webp); renameTo(File(illusDir, key)) }
+            edit { lib ->
+                lib.illusDeleted.remove(key)
+                lib.illus.getOrPut(key) { IllusEntry() }.apply { dirty = true; changed = System.currentTimeMillis() }
+            }
+            added += "Bab $bab adegan $scene"
+        }
+
+        for (uri in uris) {
+            val name = displayName(uri)
+            runCatching {
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    if (name.endsWith(".zip", ignoreCase = true)) {
+                        val zip = ZipInputStream(input)
+                        while (true) {
+                            val entry = zip.nextEntry ?: break
+                            val entryName = entry.name.substringAfterLast('/')
+                            if (!entry.isDirectory && !entryName.startsWith(".")) take(entryName, zip.readBytes())
+                        }
+                    } else take(name, input.readBytes())
+                } ?: error("tidak bisa dibuka")
+            }.onFailure { skipped += "$name (${it.message})" }
+        }
+        return IllustrationImport(added, skipped)
+    }
+
+    /** Removes the account's imported illustrations of a book (bundled ones stay). */
+    fun deleteIllustrations(id: String) {
+        if (!SAFE_ID.matches(id)) return
+        File(illusDir, id).deleteRecursively()
+        edit { lib ->
+            lib.illus.keys.filter { it.startsWith("$id/") }.forEach { key ->
+                if (lib.illus.remove(key)?.synced == true) lib.illusDeleted += key
+            }
+        }
+    }
+
+    /** Number of imported (not bundled) illustrations of a book. */
+    fun importedIllustrationCount(id: String): Int =
+        File(illusDir, id).listFiles { f -> ILLUS_FILE.matches(f.name) }?.size ?: 0
+
+    private fun displayName(uri: Uri): String =
+        runCatching {
+            context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(0) else null
+            }
+        }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
 
     /** True for the first account that signed in on this device: it may adopt the old localStorage bookmarks. */
     fun ownsLegacyData(): Boolean = deviceOwner(context) == userId
@@ -195,6 +319,72 @@ class BookRepository(private val context: Context, private val userId: String) {
                 if (cur.updatedAt == e.updatedAt) cur.dirty = false
             }
         }
+
+        // 5. Scene illustrations.
+        syncIllustrations(token)
+    }
+
+    /**
+     * Illustrations sync file by file: local deletions and imports are pushed first, then each
+     * book's folder in the bucket is listed; files whose `updated_at` changed are downloaded, and
+     * files that disappeared remotely (deleted on another device) are removed here.
+     */
+    private fun syncIllustrations(token: String) {
+        for (key in read { it.illusDeleted.toList() }) {
+            try {
+                Supabase.call("DELETE", "/storage/v1/object/$BUCKET/$userId/$ILLUS/$key", token)
+            } catch (e: SupabaseException) {
+                // already gone from the bucket
+            }
+            edit { it.illusDeleted.remove(key) }
+        }
+
+        val uploaded = HashSet<String>()
+        for ((key, e) in read { lib -> lib.illus.filter { it.value.dirty }.mapValues { it.value.copy() } }) {
+            val file = File(illusDir, key)
+            if (file.exists()) {
+                Supabase.call(
+                    "POST", "/storage/v1/object/$BUCKET/$userId/$ILLUS/$key", token, file.readBytes(),
+                    contentType = "image/webp", headers = mapOf("x-upsert" to "true"),
+                )
+            }
+            uploaded += key
+            edit { lib ->
+                val cur = lib.illus[key] ?: return@edit
+                cur.synced = true
+                if (cur.changed == e.changed) cur.dirty = false // not re-imported meanwhile
+            }
+        }
+
+        for (book in list()) {
+            val body = JSONObject().put("prefix", "$userId/$ILLUS/${book.id}").put("limit", 1000)
+            val remote = JSONArray(Supabase.call("POST", "/storage/v1/object/list/$BUCKET", token, body.toString().toByteArray()).toString(Charsets.UTF_8))
+            val seen = HashSet<String>()
+            for (i in 0 until remote.length()) {
+                val o = remote.getJSONObject(i)
+                val name = o.optString("name")
+                if (o.isNull("id") || !ILLUS_FILE.matches(name)) continue // folder or foreign file
+                val key = "${book.id}/$name"
+                val stamp = o.optString("updated_at")
+                seen += key
+                val local = read { lib -> if (key in lib.illusDeleted) null else lib.illus[key]?.copy() ?: IllusEntry() } ?: continue
+                val file = File(illusDir, key)
+                if (key !in uploaded && !local.dirty && (local.stamp != stamp || !file.exists())) {
+                    val bytes = Supabase.call("GET", "/storage/v1/object/authenticated/$BUCKET/$userId/$ILLUS/$key", token)
+                    File(illusDir, "$key.part").apply { parentFile?.mkdirs(); writeBytes(bytes); renameTo(file) }
+                }
+                edit { lib ->
+                    if (key in lib.illusDeleted) return@edit
+                    lib.illus.getOrPut(key) { IllusEntry() }.apply { this.stamp = stamp; synced = true }
+                }
+            }
+            edit { lib ->
+                lib.illus.filter { (k, e) -> k.startsWith("${book.id}/") && k !in seen && e.synced && !e.dirty }.keys.forEach { k ->
+                    lib.illus.remove(k)
+                    File(illusDir, k).delete()
+                }
+            }
+        }
     }
 
     // ---------- local library state (library.json) ----------
@@ -218,7 +408,24 @@ class BookRepository(private val context: Context, private val userId: String) {
         }
     }
 
-    private class Library(val books: MutableMap<String, Entry> = LinkedHashMap(), val deleted: MutableSet<String> = LinkedHashSet())
+    /** Sync bookkeeping for one imported illustration, keyed "<bookId>/<file name>". */
+    private data class IllusEntry(
+        /** `updated_at` of the copy in the bucket that this device has. */
+        var stamp: String? = null,
+        /** Imported here and not uploaded yet. */
+        var dirty: Boolean = false,
+        /** The bucket has (had) this file. */
+        var synced: Boolean = false,
+        /** Local import time, so an upload does not clear a newer re-import. */
+        var changed: Long = 0,
+    )
+
+    private class Library(
+        val books: MutableMap<String, Entry> = LinkedHashMap(),
+        val deleted: MutableSet<String> = LinkedHashSet(),
+        val illus: MutableMap<String, IllusEntry> = LinkedHashMap(),
+        val illusDeleted: MutableSet<String> = LinkedHashSet(),
+    )
 
     private fun <T> read(block: (Library) -> T): T = synchronized(fileLock) { block(load()) }
 
@@ -246,6 +453,18 @@ class BookRepository(private val context: Context, private val userId: String) {
             }
         }
         o.optJSONArray("deleted")?.let { arr -> for (i in 0 until arr.length()) lib.deleted += arr.getString(i) }
+        o.optJSONObject("illus")?.let { illus ->
+            illus.keys().forEach { key ->
+                val b = illus.getJSONObject(key)
+                lib.illus[key] = IllusEntry(
+                    stamp = if (b.isNull("stamp")) null else b.optString("stamp"),
+                    dirty = b.optBoolean("dirty"),
+                    synced = b.optBoolean("synced"),
+                    changed = b.optLong("changed"),
+                )
+            }
+        }
+        o.optJSONArray("illusDeleted")?.let { arr -> for (i in 0 until arr.length()) lib.illusDeleted += arr.getString(i) }
         return lib
     }
 
@@ -261,8 +480,21 @@ class BookRepository(private val context: Context, private val userId: String) {
                 .put("fileDirty", e.fileDirty)
                 .put("synced", e.synced))
         }
+        val illus = JSONObject()
+        lib.illus.forEach { (key, e) ->
+            illus.put(key, JSONObject()
+                .put("stamp", e.stamp ?: JSONObject.NULL)
+                .put("dirty", e.dirty)
+                .put("synced", e.synced)
+                .put("changed", e.changed))
+        }
         val tmp = File(userDir, "library.json.tmp")
-        tmp.writeText(JSONObject().put("books", books).put("deleted", JSONArray(lib.deleted.toList())).toString())
+        tmp.writeText(JSONObject()
+            .put("books", books)
+            .put("deleted", JSONArray(lib.deleted.toList()))
+            .put("illus", illus)
+            .put("illusDeleted", JSONArray(lib.illusDeleted.toList()))
+            .toString())
         tmp.renameTo(libraryFile)
     }
 
@@ -287,6 +519,14 @@ class BookRepository(private val context: Context, private val userId: String) {
         private const val ASSET_DIR = "books"
         private const val BUCKET = "novels"
         private const val COLUMNS = "book_id,has_file,progress,reader_state,updated_at,file_version"
+        /** Folder name for illustrations: in assets, under the user dir, and in the bucket. */
+        private const val ILLUS = "illustrations"
+        private const val MAX_ILLUS_WIDTH = 1000
+        /** Stored illustration file name. */
+        private val ILLUS_FILE = Regex("""bab(\d{2,})-adegan(\d+)\.webp""")
+        /** Where an imported picture goes, read from its file name ("bab01-adegan2.jpg", "Bab 1 Adegan 2.png"). */
+        private val ILLUS_NAME = Regex("""bab\D{0,3}?0*(\d+)\D*?adegan\D{0,3}?0*(\d+)""", RegexOption.IGNORE_CASE)
+        private val SAFE_ID = Regex("[a-z0-9-]+")
         private val fileLock = Any()
         private val syncLock = Any()
 
@@ -331,6 +571,28 @@ class BookRepository(private val context: Context, private val userId: String) {
             val start = marker.range.last + 1
             val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
             return text.substring(start, end).trim().removeSuffix(";")
+        }
+
+        /** Scenes in a chapter = scene breaks ("* * *", `<hr class="scene">`) + 1. */
+        fun sceneCount(html: String): Int = Regex("""<hr class="scene"\s*/?>""").findAll(html).count() + 1
+
+        /** Decodes any image Android can read, scales it down to [MAX_ILLUS_WIDTH] px wide, returns WebP bytes. */
+        @Suppress("DEPRECATION") // CompressFormat.WEBP is the only WebP format before API 30
+        private fun toWebp(bytes: ByteArray): ByteArray? {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            if (bounds.outWidth <= 0) return null
+            var sample = 1
+            while (bounds.outWidth / (sample * 2) >= MAX_ILLUS_WIDTH) sample *= 2
+            val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
+                ?: return null
+            val bmp = if (decoded.width > MAX_ILLUS_WIDTH) {
+                Bitmap.createScaledBitmap(decoded, MAX_ILLUS_WIDTH, decoded.height * MAX_ILLUS_WIDTH / decoded.width, true)
+                    .also { decoded.recycle() }
+            } else decoded
+            val format = if (Build.VERSION.SDK_INT >= 30) Bitmap.CompressFormat.WEBP_LOSSY
+                else Bitmap.CompressFormat.WEBP
+            return ByteArrayOutputStream().use { out -> bmp.compress(format, 75, out); bmp.recycle(); out.toByteArray() }
         }
 
         private fun slug(s: String): String =

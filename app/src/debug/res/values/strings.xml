@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The debug build installs next to the release app; this tells the two apart. -->
+    <string name="app_name">Pasar Purnama (uji)</string>
+</resources>

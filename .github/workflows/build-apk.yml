@@ -1,0 +1,25 @@
+# Builds a test APK on GitHub, so it can be tried without the local Android toolchain.
+# Download it from the run's "Artifacts" section (Actions tab). The debug build installs
+# next to the release app as "Pasar Purnama (uji)" (application id ...pasarpurnama.debug).
+name: Build APK
+
+on:
+  push:
+    branches: [main, master, "claude/**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pasar-purnama-uji-apk
+          path: app/build/outputs/apk/debug/app-debug.apk

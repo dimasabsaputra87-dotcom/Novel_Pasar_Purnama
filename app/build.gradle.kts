@@ -36,6 +36,11 @@ android {
     }
 
     buildTypes {
+        // Separate app id, so a test build installs next to the release app instead of over it.
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-uji"
+        }
         release {
             isMinifyEnabled = false
             signingConfig = signingConfigs.findByName("release")

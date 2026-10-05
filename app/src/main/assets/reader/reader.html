@@ -76,7 +76,7 @@
   #flow li{margin:.2em 0;}
   #flow em{font-style:italic;} #flow strong{font-weight:700;}
   #flow figure{margin:0 0 .9em;text-align:center;break-inside:avoid;}
-  #flow figure img{max-height:70vh;border-radius:6px;}
+  #flow figure img{max-height:70vh;height:auto;object-fit:contain;border-radius:6px;}
   #flow figcaption{font-size:.8em;color:var(--ink-soft);margin-top:.3em;font-style:italic;}
   #flow hr.scene{border:none;text-align:center;margin:1.2em 0;overflow:visible;}
   #flow hr.scene::before{content:"* * *";color:var(--ink-soft);letter-spacing:.4em;font-size:1em;}
@@ -202,7 +202,8 @@
     #printroot h2.p-title{font-size:18pt;margin:0 0 14pt;}
     #printroot p{text-indent:1.4em;margin:0 0 .5em;text-align:justify;}
     #printroot p:first-of-type{text-indent:0;}
-    #printroot img{max-width:100%;}
+    #printroot img{max-width:100%;height:auto;}
+    #printroot figure{margin:0 0 .5em;text-align:center;page-break-inside:avoid;}
     #printroot hr.scene{border:none;text-align:center;} #printroot hr.scene::before{content:"* * *";letter-spacing:.4em;}
     @page{
       margin:16mm 15mm 18mm;
@@ -417,15 +418,33 @@ const NOVEL = JSON.parse(Android.getNovel());
     goToPage(pageOfAnchor(a), false, 0, true);
     if(flash) flashAnchor(a);
   }
+  /* Scene illustrations from the app: { "<bab>-<adegan>": {src, w, h} }, 1-based. Each picture
+     goes at the end of its scene, right before the "* * *"; the last scene of a chapter has no
+     break after it, so its picture closes the chapter. */
+  const ILLUS = (()=>{ try{ return JSON.parse(Android.getIllustrations()||"{}"); }catch(e){ return {}; } })();
+  function chapterHtml(ci){
+    const parts = NOVEL.chapters[ci].html.split(/(<hr class="scene"\s*\/?>)/);  // scene, break, scene, ...
+    return parts.map((p,i)=>{
+      const il = i%2 ? null : ILLUS[(ci+1)+"-"+(i/2+1)];
+      return il ? p.replace(/\s*$/, '\n<figure class="illus"><img src="'+escapeHtml(il.src)+'" width="'+il.w+
+        '" height="'+il.h+'" alt=""></figure>\n') : p;
+    }).join("");
+  }
   function renderChapter(ci){
     state.chapter = Math.max(0, Math.min(NOVEL.chapters.length-1, ci));
     const c = NOVEL.chapters[state.chapter];
     flow.innerHTML =
       '<div class="chap-open"><div class="kicker">Chapter '+(state.chapter+1)+'</div>'+
-      '<div class="title">'+escapeHtml(c.title)+'</div></div>' + c.html;
-    // index top-level blocks for anchoring
-    let bi=0; for(const el of flow.children){ el.setAttribute("data-bi", bi++); }
+      '<div class="title">'+escapeHtml(c.title)+'</div></div>' + chapterHtml(state.chapter);
+    // index top-level blocks for anchoring; illustrations are skipped so adding or removing
+    // one never moves saved positions and bookmarks
+    let bi=0; for(const el of flow.children){ if(!el.classList.contains("illus")) el.setAttribute("data-bi", bi++); }
+    // Pages are counted before pictures finish loading; count again once they have.
+    for(const img of flow.querySelectorAll("img"))
+      if(!img.complete) img.addEventListener("load", imgLoaded, {once:true});
   }
+  let imgTimer = 0;
+  function imgLoaded(){ clearTimeout(imgTimer); imgTimer = setTimeout(()=>relayout(false), 50); }
   /* ---------- character-level anchor ----------
      anchor = { bi, off }: first character on the current page, as block index +
      character offset inside that block. Survives any re-pagination. */
@@ -450,7 +469,8 @@ const NOVEL = JSON.parse(Android.getNovel());
     if(state.view!=="reading") return null;
     const fl=flowLeft(), p=state.page;
     for(const el of flow.children){
-      const bi=parseInt(el.getAttribute("data-bi")||"0",10);
+      if(!el.hasAttribute("data-bi")) continue;               // illustration
+      const bi=parseInt(el.getAttribute("data-bi"),10);
       const br=el.getBoundingClientRect();
       if(pageOfX(br.right-fl-4) < p) continue;            // block ends before this page
       let base=0;
@@ -508,6 +528,7 @@ const NOVEL = JSON.parse(Android.getNovel());
     const sr = stage.getBoundingClientRect();
     let best=0, bestLeft=Infinity;
     for(const el of flow.children){
+      if(!el.hasAttribute("data-bi")) continue;
       const r = el.getBoundingClientRect();
       if(r.right > sr.left+1 && r.left < sr.right-1){ // in view horizontally
         if(r.left < bestLeft){ bestLeft=r.left; best=parseInt(el.getAttribute("data-bi")||"0",10); }
@@ -724,9 +745,11 @@ const NOVEL = JSON.parse(Android.getNovel());
       root.appendChild(cov);
     }
     const list = all ? NOVEL.chapters : [NOVEL.chapters[state.chapter]];
-    list.forEach(c=>{ const s=document.createElement("section"); s.className="p-chap";
-      s.innerHTML='<h2 class="p-title">'+escapeHtml(c.title)+'</h2>'+c.html; root.appendChild(s); });
-    setTimeout(()=>Android.print((NOVEL.title||"Novel")+(all?"":" - "+list[0].title)),60);
+    list.forEach((c,i)=>{ const s=document.createElement("section"); s.className="p-chap";
+      s.innerHTML='<h2 class="p-title">'+escapeHtml(c.title)+'</h2>'+chapterHtml(all?i:state.chapter); root.appendChild(s); });
+    // wait for the illustrations, or they are missing from the PDF
+    Promise.all([...root.querySelectorAll("img")].map(img=>img.decode().catch(()=>{})))
+      .then(()=>setTimeout(()=>Android.print((NOVEL.title||"Novel")+(all?"":" - "+list[0].title)),60));
   }
 
   /* ---------- cover & toc ---------- */

@@ -76,7 +76,7 @@
   #flow li{margin:.2em 0;}
   #flow em{font-style:italic;} #flow strong{font-weight:700;}
   #flow figure{margin:0 0 .9em;text-align:center;break-inside:avoid;}
-  #flow figure img{max-height:70vh;border-radius:6px;}
+  #flow figure img{max-height:70vh;height:auto;object-fit:contain;border-radius:6px;}
   #flow figcaption{font-size:.8em;color:var(--ink-soft);margin-top:.3em;font-style:italic;}
   #flow hr.scene{border:none;text-align:center;margin:1.2em 0;overflow:visible;}
   #flow hr.scene::before{content:"* * *";color:var(--ink-soft);letter-spacing:.4em;font-size:1em;}
@@ -425,7 +425,12 @@ const NOVEL = JSON.parse(Android.getNovel());
       '<div class="title">'+escapeHtml(c.title)+'</div></div>' + c.html;
     // index top-level blocks for anchoring
     let bi=0; for(const el of flow.children){ el.setAttribute("data-bi", bi++); }
+    // Pages are counted before pictures finish loading; count again once they have.
+    for(const img of flow.querySelectorAll("img"))
+      if(!img.complete) img.addEventListener("load", imgLoaded, {once:true});
   }
+  let imgTimer = 0;
+  function imgLoaded(){ clearTimeout(imgTimer); imgTimer = setTimeout(()=>relayout(false), 50); }
   /* ---------- character-level anchor ----------
      anchor = { bi, off }: first character on the current page, as block index +
      character offset inside that block. Survives any re-pagination. */

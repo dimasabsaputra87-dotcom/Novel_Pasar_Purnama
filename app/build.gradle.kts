@@ -14,8 +14,8 @@ android {
         applicationId = "com.dimas.pasarpurnama"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         // Supabase project (accounts + per-user library). The publishable key is meant to ship in
         // the app; data access is enforced by the row-level security in supabase/setup.sql.

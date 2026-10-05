@@ -18,6 +18,7 @@ Android e-reader for the novel *Pasar Purnama* (Kotlin + Jetpack Compose, Materi
 
 - **For users (no rebuild):** copy the `.html` from build_novel.py (or a `.json`) to the phone, then "Tambah buku". Re-importing the same title + subtitle updates that book.
 - **Bundled in the APK:** extract the NOVEL JSON from the HTML into `app/src/main/assets/books/<name>.json` and rebuild.
+- **Scene illustrations:** put images named `babNN-adeganM.webp` (or .jpg/.png) in `illustrations/jilid-N/` and run `python tools/add_illustrations.py app/src/main/assets/books/<book>.json illustrations/jilid-N`. Each picture is embedded (data: URI, WebP ≤1000 px) as `<figure class="illus">` right before the M-th `<hr class="scene">` of chapter NN; the last scene has no break after it, so its picture goes at the end of the chapter. Re-run it after regenerating a book from build_novel.py; it is idempotent (old illustrations are removed first).
 - When updating the reader itself from a newer build_novel.py HTML, keep the Android edits in `reader.html` (search for `Android.` and `PPback`).
 
 ## Build environment (Windows, this machine)

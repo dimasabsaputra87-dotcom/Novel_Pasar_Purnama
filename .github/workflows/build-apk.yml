@@ -18,7 +18,9 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
-      - run: chmod +x gradlew && ./gradlew --no-daemon assembleDebug
+      # gradle.properties points Java at the Windows trust store (for the local machine);
+      # use the JDK's own one here.
+      - run: chmod +x gradlew && ./gradlew --no-daemon -Djavax.net.ssl.trustStoreType=PKCS12 assembleDebug
       - uses: actions/upload-artifact@v4
         with:
           name: pasar-purnama-uji-apk
